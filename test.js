@@ -1,8 +1,9 @@
 /* 回归自检：共享 DOM 桩 + 抽出 index.html 内联脚本在页面作用域执行 + 遗传学比例断言。
    约定：每个用例用模板串直接给出可执行代码，不使用任何会提前求值的包装函数。
    期望值来历：教科书经典比例 + 独立复算脚本核对（README「自检」一节）。 */
-const fs=require('fs'), vm=require('vm');
-const FILE=process.argv[2]||'C:/Users/ERAZER/Desktop/GC_src/Genetics_Calculator-main/index.html';
+const fs=require('fs'), path=require('path'), vm=require('vm');
+/* 默认读取同目录的 index.html（跨平台），也可用命令行参数指定其它文件 */
+const FILE=process.argv[2]||path.join(__dirname,'index.html');
 const html=fs.readFileSync(FILE,'utf8');
 let script=(()=>{
   const m=html.match(/<script>([\s\S]*?)<\/script>/);
@@ -203,8 +204,19 @@ T('染色体图：放置成功会弹模态框',
  `__reset();__setSimple(2);(function(){var hit=0;var old=openModal;window.openModal=function(){hit++};selectedChip='n0|a';chromHandleSlotClick('simple',0,1,1);window.openModal=old;return String(hit>0)})()`, eq('true'));
 T('致死栏目添加规则后保持展开',
  `__reset();__setSimple(1);renderConfig();(function(){var c=document.getElementById('configPanel');var d=[].slice.call(c.querySelectorAll('details.panel')).find(function(x){return x.querySelector('summary').textContent.indexOf('配子致死')>=0});return String(!!d)})()`, eq('true'));
-T('计算过程文本含分步详解（雌/雄配子、棋盘格、合并同类项、校验）',
- `__reset();__setSimple(2);(function(){var g=__self(${P2},1);lastResult={gens:g,p1:${P2},p2:null,mode:'self'};var t=buildStepsText(g[0]);return ['雌配子的形成','雄配子的形成','棋盘格','合并同类项','表型比','校验'].filter(function(k){return t.indexOf(k)<0}).join(',')||'ok'})()`, eq('ok'));
+T('计算过程文本含分步详解（雌/雄配子、棋盘格、合并同类项、校验、∵/∴）',
+ `__reset();__setSimple(2);(function(){var g=__self(${P2},1);lastResult={gens:g,p1:${P2},p2:null,mode:'self'};var t=__stepsText(g[0]);return ['雌配子（卵细胞）的形成','雄配子（精子）的形成','棋盘格','合并同类项','表型比','校验','∵','∴'].filter(function(k){return t.indexOf(k)<0}).join(',')||'ok'})()`, eq('ok'));
+T('计算过程把表格作为 DOM 节点插入（不再出现 [object HTMLTableElement]）',
+ `__reset();__setSimple(2);(function(){var g=__self(${P2},1);lastResult={gens:g,p1:${P2},p2:null,mode:'self'};var a=buildStepsText(g[0]);var hasTable=a.some(function(x){return x&&x.nodeType===1});return (hasTable&&String(a).indexOf('[object HTMLTableElement]')<0)?'ok':'hasTable='+hasTable})()`, eq('ok'));
+T('图解模式：抑制线支持"有A则抑制B"与"无A则抑制B"两种语义',
+ `__reset();__setSimple(2);(function(){
+   var nd=[{id:1,name:'白',x:60,y:60},{id:2,name:'紫',x:240,y:60}];
+   var rx=[{from:1,to:2,gene:'B',pri:1}];
+   var mkHyp=function(mode){return {genes:[{letter:'A'},{letter:'B'}],inh:['auto','auto'],let:['none','none'],flip:[],inter:'pw',pw:{nodes:nd,reactions:rx,inhibitions:[{gene:'A',targetGene:'B',mode:mode}]}}};
+   var zA={all:{n0:['A','A'],n1:['B','B']},cyto:{},sex:'F'};
+   var za={all:{n0:['a','a'],n1:['B','B']},cyto:{},sex:'F'};
+   return JSON.stringify([pwPhenotype(mkHyp('present'),zA),pwPhenotype(mkHyp('present'),za),pwPhenotype(mkHyp('absent'),zA),pwPhenotype(mkHyp('absent'),za)]);
+ })()`, eq('["白","紫","紫","白"]'));
 T('世代详情弹窗（P 与 F1）无异常',
  `__reset();__setSimple(2);(function(){var g=__self(${P2},1);lastResult={gens:g,p1:${P2},p2:null,mode:'self'};showGenDetail('F1');showGenDetail('P');return 'ok'})()`, eq('ok'));
 T('多代图解渲染（F6 三基因）无异常',

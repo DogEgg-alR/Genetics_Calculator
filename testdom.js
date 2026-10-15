@@ -139,6 +139,26 @@ function __genoMap(pop){
   return [...m.entries()].sort((a,b)=>String(a[0]).localeCompare(String(b[0]))).map(x=>[x[0],rStr(x[1])]);
 }
 function __sum(pop){let t=rZero;pop.forEach(v=>t=rAdd(t,v.pn));return rStr(t)}
+/* 把 buildStepsText 的混合数组（文字 + DOM 节点）拉平成纯文本，供断言检查 */
+function __stepsText(g){
+  const NL=String.fromCharCode(10);
+  const items=buildStepsText(g);
+  const txt=[];
+  const walk=e=>{
+    if(!e)return;
+    if(e._text)txt.push(e._text);
+    if(e.tag==='td'||e.tag==='th')txt.push('  ');
+    if(e.children)for(const c of e.children)walk(c);
+    if(e.tag==='tr')txt.push(NL);
+  };
+  items.forEach(x=>{
+    if(x==null)return;
+    if(typeof x==='string'){txt.push(x);txt.push(NL);return}
+    if(x.nodeType===1){walk(x);txt.push(NL);return}
+    txt.push(String(x));txt.push(NL);
+  });
+  return txt.join('');
+}
 function __inter(type,traits,extra){
   S.inter=Object.assign({enabled:true,type:type,locusA:'n0',locusB:'n1',traits:traits,
     addLoci:['n0','n1'],pathway:{steps:[],final:''},custom:{},customLoci:[]},extra||{});

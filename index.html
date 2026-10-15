@@ -90,6 +90,22 @@ table.rtab{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
 .tabwrap{overflow-x:auto}
 .steps table.rtab{font-size:12px;white-space:nowrap}
 .steps table.rtab td{padding:4px 6px}
+/* 计算过程：每行一条，∵/∴ 分行说明 */
+.steps{font-size:13px;line-height:1.7}
+.steps .stepline{white-space:pre-wrap;word-break:break-word}
+.steps .stepline:empty{height:6px}
+.steps>table.rtab{margin:6px 0 10px;width:auto;min-width:min(100%,360px)}
+.steps .rtab th{background:var(--accent-soft)}
+/* 棋盘格（Punnett square） */
+table.rtab.punnett{border-collapse:collapse;font-size:12px;white-space:normal}
+table.rtab.punnett th,table.rtab.punnett td{border:1px solid var(--line);padding:5px 7px;text-align:center;vertical-align:middle}
+table.rtab.punnett th.corner{background:var(--chip);font-size:11px;color:var(--muted)}
+table.rtab.punnett td .pz{font-weight:600}
+table.rtab.punnett td .hint{font-size:10.5px;color:var(--muted)}
+/* 反推图解：催化基因（酶）选择框——加大便于点选 */
+.pwEnzyme{margin:2px 0 0;padding:3px 6px;border:1px solid var(--line);border-radius:7px;background:var(--panel);box-shadow:var(--shadow)}
+.pwEnzyme select{font-size:13px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)}
+.pwEnzyme .lbl{font-size:11px;color:var(--muted);margin-right:2px}
 table.rtab th,table.rtab td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
 table.rtab th{background:var(--accent-soft);font-weight:600}
 .modal{position:fixed;inset:0;background:rgba(10,14,20,.55);z-index:100;display:flex;align-items:flex-end;justify-content:center;padding:0}
@@ -138,7 +154,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:18px 0 30px}
     <div class="mbody" id="mBody"></div>
   </div>
 </div>
-<footer>遗传学多功能计算器 · 单文件离线运行 · 供学习演算使用 · 版本 <b id="ver">v2.7</b>（染色体视图 · 反推修复 · 多代性能 · 详细计算过程版）</footer>
+<footer>遗传学多功能计算器 · 单文件离线运行 · 供学习演算使用 · 版本 <b id="ver">v2.8</b>（染色体视图 · 反推修复 · 多代性能 · 详细计算过程 · 图解抑制可选版）</footer>
 <script>
 
 
@@ -1229,10 +1245,13 @@ function pwPhenotype(hyp,z){
   const targets=new Set(reactions.map(r=>r.to));
   const sources=nodes.filter(n=>!targets.has(n.id));
   const start=(sources.length?sources:nodes)[0];
-  /* 抑制表：被抑制的催化基因集合（gene 产物缺失时 targetGene 失效——模式二语义：B抑制A） */
+  /* 抑制表：被抑制的催化基因集合。
+     mode='present'（默认，可选）：gene 显性（产物存在）时抑制 targetGene —— "有A则抑制B"
+     mode='absent'：gene 产物缺失时 targetGene 失效 —— 旧语义"无A则抑制B" */
   const inhDisabled=new Set();
   inhibitions.forEach(ib=>{
-    if(!pwGeneActive(hyp,ib.gene,z))inhDisabled.add(ib.targetGene);
+    const on=(ib.mode==='absent')?(!pwGeneActive(hyp,ib.gene,z)):pwGeneActive(hyp,ib.gene,z);
+    if(on)inhDisabled.add(ib.targetGene);
   });
   /* 反应可用性 */
   const usable=r=>{
@@ -1915,7 +1934,7 @@ function hypDesc(m){
       const a=nodeById(r.from),b=nodeById(r.to);
       return r.gene+'基因显性时：'+(a?a.name:'?')+' → '+(b?b.name:'?');
     });
-    const ix=(pw.inhibitions||[]).map(ib=>ib.gene+'基因产物缺失时抑制'+ib.targetGene+'基因的作用');
+    const ix=(pw.inhibitions||[]).map(ib=>ib.gene+'基因'+((ib.mode==='absent')?'产物缺失时抑制':'存在时抑制')+ib.targetGene+'基因的作用');
     parts.push('通路图：'+rx.join('；')+(ix.length?'；'+ix.join('；'):'')+'；表型=物质转化推进到的最远物质');
     return parts.join('；');
   }
@@ -2120,24 +2139,27 @@ function buildPwEditor(){
     const nx=-dy/len,ny=dx/len;
     const mx=mx0+nx*k2,my=my0+ny*k2;
     svg.append(mk('path',{d:'M'+p1.x+' '+p1.y+' Q'+mx+' '+my+' '+p2.x+' '+p2.y,fill:'none',stroke:'#4f6ef7','stroke-width':1.8,'marker-end':'url(#pwArrow)'}));
-    /* 催化基因选择（跟随箭头中点，加大） */
-    const geneOpts=[['','（选择催化基因）']].concat(rv.genes.map(g=>[g.letter,'酶'+g.letter+'（'+g.letter+'显性时）']));
-    const fo=mk('foreignObject',{x:mx-83,y:my-34,width:166,height:28});
+    /* 催化基因选择（跟随箭头中点，加大尺寸便于点选） */
+    const geneOpts=[['','（不指定催化基因）']].concat(rv.genes.map(g=>[g.letter,'酶'+g.letter+'：'+g.letter+' 显性时此步才进行']));
+    const fo=mk('foreignObject',{x:mx-112,y:my-44,width:224,height:44});
     const hbox=document.createElement('div');
-    hbox.style.cssText='display:flex;gap:3px;align-items:center';
+    hbox.className='pwEnzyme';
+    const lab=document.createElement('div');
+    lab.className='lbl';
+    lab.textContent='催化基因（酶）';
     const sel=document.createElement('select');
     sel.title='催化基因（酶）：该基因显性时此步转化才能进行';
-    sel.style.cssText='flex:1;min-width:0;font-size:12px;padding:2px 3px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text)';
+    sel.style.cssText='width:100%';
     geneOpts.forEach(o=>{const op=document.createElement('option');op.value=o[0];op.textContent=o[1];if(o[0]===r.gene)op.selected=true;sel.append(op)});
     sel.onchange=()=>{r.gene=sel.value};
     const priSel=document.createElement('select');
     priSel.title='分支优先级：起点相同时，数字大的产物优先表现（如模式二"紫(2)优先于绿(1)"）';
-    priSel.style.cssText='font-size:12px;padding:2px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text)';
-    ['1','2','3'].forEach(v=>{const op=document.createElement('option');op.value=v;op.textContent='优'+v;if(String(r.pri==null?1:r.pri)===v)op.selected=true;priSel.append(op)});
+    priSel.style.cssText='font-size:12px;padding:4px 6px;margin-top:3px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)';
+    ['1','2','3'].forEach(v=>{const op=document.createElement('option');op.value=v;op.textContent='分支优先级 优'+v;if(String(r.pri==null?1:r.pri)===v)op.selected=true;priSel.append(op)});
     priSel.onchange=()=>{r.pri=parseInt(priSel.value)};
-    hbox.append(sel,priSel);
+    hbox.append(lab,sel,priSel);
     fo.append(hbox);svg.append(fo);
-    const del=mk('text',{x:mx+84,y:my-16,'font-size':12,fill:'#dc2626',cursor:'pointer'},'✕');
+    const del=mk('text',{x:mx+114,y:my-16,'font-size':12,fill:'#dc2626',cursor:'pointer'},'✕');
     del.addEventListener('click',()=>{pw.reactions.splice(k,1);renderRun()});
     svg.append(del);
   });
@@ -2147,7 +2169,7 @@ function buildPwEditor(){
     const gA=rv.genes.find(g=>g.letter===ib.gene),gB=rv.genes.find(g=>g.letter===ib.targetGene);
     if(!gA||!gB)return;
     svg.append(mk('line',{x1:200,y1:y,x2:340,y2:y,stroke:'#d97706','stroke-width':1.6,'stroke-dasharray':'5,3'}));
-    svg.append(mk('text',{x:270,y:y-4,'text-anchor':'middle','font-size':10.5,fill:'#d97706'},ib.gene+'抑制'+ib.targetGene));
+    svg.append(mk('text',{x:270,y:y-4,'text-anchor':'middle','font-size':10.5,fill:'#d97706'},(ib.mode==='absent'?'无':'有')+ib.gene+' → 抑制 '+ib.targetGene));
     const del=mk('text',{x:352,y:y,'font-size':11,fill:'#dc2626',cursor:'pointer'},'✕');
     del.addEventListener('click',()=>{pw.inhibitions.splice(k,1);renderRun()});
     svg.append(del);
@@ -2157,7 +2179,7 @@ function buildPwEditor(){
     const addInh=mk('text',{x:16,y:y+4,'font-size':10.5,fill:'currentColor',opacity:.6,cursor:'pointer'},'+ 抑制线');
     addInh.addEventListener('click',()=>{
       const gs=rv.genes.map(g=>g.letter);
-      pw.inhibitions.push({gene:gs[0],targetGene:gs[1]||gs[0]});
+      pw.inhibitions.push({gene:gs[0],targetGene:gs[1]||gs[0],mode:'present'});
       renderRun();
     });
     svg.append(addInh);
@@ -2225,17 +2247,19 @@ function buildPwEditor(){
   const wrap2=el('div',{class:'chromwrap'},svg);
   wrap.append(wrap2);
   /* 抑制线编辑（表单方式补充） */
-  const inb=el('div',{class:'row'});
-  inb.append(el('span',{class:'hint'},'抑制关系：'));
+  const inb=el('div');
+  inb.append(el('div',{class:'hint',html:'<b>抑制线</b>可选两种语义：<b>有 A 则抑制 B</b>（A 的产物存在时 B 催化的反应不能进行）／<b>无 A 则抑制 B</b>（A 的产物缺失时 B 失效）。'}));
   pw.inhibitions.forEach((ib,k)=>{
-    inb.append(selIn(ib.gene,rv.genes.map(g=>[g.letter,g.letter]),v=>ib.gene=v));
-    inb.append(el('span',{class:'hint'},'产物缺失时抑制'));
-    inb.append(selIn(ib.targetGene,rv.genes.map(g=>[g.letter,g.letter]),v=>ib.targetGene=v));
-    inb.append(el('button',{class:'btn mini danger',onclick:()=>{pw.inhibitions.splice(k,1);renderRun()}},'删'));
-    inb.append(el('span',{class:'hint'},'　'));
+    const row=el('div',{class:'row'});
+    row.append(el('span',{class:'badge'},'抑制'+(k+1)));
+    row.append(selIn(ib.gene,rv.genes.map(g=>[g.letter,g.letter+' 基因']),v=>{ib.gene=v;renderRun()}));
+    row.append(selIn(ib.mode||'present',[['present','存在时抑制（有A则抑制B）'],['absent','缺失时抑制（无A则抑制B）']],v=>{ib.mode=v;renderRun()}));
+    row.append(selIn(ib.targetGene,rv.genes.map(g=>[g.letter,g.letter+' 基因']),v=>{ib.targetGene=v;renderRun()}));
+    row.append(el('button',{class:'btn mini danger',onclick:()=>{pw.inhibitions.splice(k,1);renderRun()}},'删'));
+    inb.append(row);
   });
   if(rv.genes.length>=2)
-    inb.append(el('button',{class:'addbtn',onclick:()=>{if(pw.inhibitions.length<3){pw.inhibitions.push({gene:rv.genes[0].letter,targetGene:rv.genes[1].letter});renderRun()}}},'+ 抑制关系'));
+    inb.append(el('button',{class:'addbtn',onclick:()=>{if(pw.inhibitions.length<3){pw.inhibitions.push({gene:rv.genes[0].letter,targetGene:rv.genes[1].letter,mode:'present'});renderRun()}}},'+ 添加抑制线'));
   wrap.append(inb);
   return wrap;
 }
@@ -3254,47 +3278,69 @@ function buildStepsText(g){
   const L=[];
   const D=genData(g);
   const gs=D?D.gs:[],ps=D?D.ps:[];
-  L.push('═══ '+g.name+' 计算过程（分行详解） ═══');
-  L.push('代数：'+(g.name==='F1'?'P → F1（'+(lastResult.mode==='self'?'亲本自交':lastResult.mode==='free'?'两种亲本自由交配':'杂交')+'）':(lastResult.mode==='free'?'上一代群体随机交配 → ':'上一代各基因型自交 → ')+g.name));
-  L.push('');
-  (g.notes||[]).forEach(n=>L.push('· '+n));
+  const push=(...xs)=>xs.forEach(x=>L.push(x));
+  const eggName=(lastResult.mode==='self')?'自交亲本':'母本 P♀';
+  const spermName=(lastResult.mode==='self')?'自交亲本':'父本 P♂';
+  /* 表头 */
+  push('═══ '+(g.name||'该代')+' 计算过程（分行详解） ═══');
+  push('代数关系：'+(g.name==='F1'
+    ? 'P → F1（'+(lastResult.mode==='self'?'亲本自交':lastResult.mode==='free'?'两种亲本自由交配':'杂交')+'）'
+    : (lastResult.mode==='free'?'上一代群体随机交配 → ':'上一代各基因型自交 → ')+(g.name||'')));
+  if((g.notes||[]).length){push('');push('【前提与提示】');g.notes.forEach(n=>push('　· '+n))}
+
+  /* ── 配子形成 ── */
   if(g.eggs&&g.sperm){
-    L.push('');
-    L.push('【第 1 步】雌配子的形成（'+(lastResult.mode==='self'?'自交亲本':'母本 P♀')+'）');
-    gameteAnalysis(g,'F',lastResult.mode==='self'?lastResult.p1:lastResult.p1).forEach(x=>L.push(x));
-    L.push('      减数分裂的结果：');
-    g.eggs.forEach(e=>L.push('        ♀ '+gameteHtml(e.g)+'　概率 = '+rStr(e.pn)+' = '+pctOf(e.pn)));
-    const se=rAdd(g.eggs.reduce((a,e)=>rAdd(a,e.pn),rZero),rZero);
-    L.push('      校验：全部配子概率之和 = '+rStr(se)+'（应为 1）');
-    L.push('');
-    L.push('【第 2 步】雄配子的形成（'+(lastResult.mode==='self'?'自交亲本':'父本 P♂')+'）');
-    L.push('      减数分裂的结果：');
-    g.sperm.forEach(e=>L.push('        ♂ '+gameteHtml(e.g)+'　概率 = '+rStr(e.pn)+' = '+pctOf(e.pn)));
-    L.push('');
-    L.push('【第 3 步】受精（棋盘格法 / 逐对配子相乘）');
-    L.push('      每个子代基因型概率 = 该♀配子概率 × 该♂配子概率；相同基因型合并相加。');
-    const grid=el('table',{class:'rtab'});
-    const hd=el('tr');
-    hd.append(el('th',null,'♀配子（概率）'));
-    hd.append(el('th',null,'♂配子（概率）'));
-    hd.append(el('th',null,'相乘得子代基因型'));
-    hd.append(el('th',null,'概率'));
-    grid.append(hd);
-    let shown=0;
-    g.eggs.forEach(e=>g.sperm.forEach(s=>{
-      if(shown>=40)return;
-      shown++;
-      const tr=el('tr');
-      tr.append(el('td',{html:gameteHtml(e.g)+'（'+rStr(e.pn)+'）'}));
-      tr.append(el('td',{html:gameteHtml(s.g)+'（'+rStr(s.pn)+'）'}));
-      const z=combineZygote(e.g,s.g);
-      tr.append(el('td',{html:genoHtml(z)}));
-      tr.append(el('td',null,rStr(rMul(e.pn,s.pn))));
-      grid.append(tr);
-    }));
+    push('');
+    push('【一】雌配子（卵细胞）的形成 —— '+eggName);
+    const an=gameteAnalysis(g,'F',lastResult.mode==='self'?lastResult.p1:lastResult.p1);
+    an.forEach(x=>push(x.replace(/^\s+/,'　')));
+    push('　∵ 减数分裂时同源染色体分离、非同源染色体自由组合（连锁时同源染色体上的非姐妹染色单体可发生交叉互换）');
+    push('　∴ 产生下列 '+g.eggs.length+' 种卵细胞：');
+    const pet=el('table',{class:'rtab'});
+    pet.append(el('tr',null,el('th',null,'♀ 配子'),el('th',null,'概率（分数）'),el('th',null,'概率（百分数）'),el('th',null,'来源')));
+    g.eggs.forEach(e=>{
+      const src=(g.eggs.length===1)?'唯一类型（亲本为纯合子）':'分离/自由组合结果';
+      pet.append(el('tr',null,el('td',{html:gameteHtml(e.g)}),el('td',null,rStr(e.pn)),el('td',null,pctOf(e.pn)),el('td',null,src)));
+    });
+    const se=g.eggs.reduce((a,e)=>rAdd(a,e.pn),rZero);
+    pet.append(el('tr',null,el('td',null,'合计'),el('td',null,rStr(se)),el('td',null,pctOf(se)),el('td',null,'校验：应为 1')));
+    push(pet);
+
+    push('');
+    push('【二】雄配子（精子）的形成 —— '+spermName);
+    push('　∴ 产生下列 '+g.sperm.length+' 种精子：');
+    const pst=el('table',{class:'rtab'});
+    pst.append(el('tr',null,el('th',null,'♂ 配子'),el('th',null,'概率（分数）'),el('th',null,'概率（百分数）')));
+    g.sperm.forEach(e=>pst.append(el('tr',null,el('td',{html:gameteHtml(e.g)}),el('td',null,rStr(e.pn)),el('td',null,pctOf(e.pn)))));
+    const ss=g.sperm.reduce((a,e)=>rAdd(a,e.pn),rZero);
+    pst.append(el('tr',null,el('td',null,'合计'),el('td',null,rStr(ss)),el('td',null,pctOf(ss))));
+    push(pst);
+
+    /* ── 棋盘格受精 ── */
+    push('');
+    push('【三】受精作用：♀配子 × ♂配子（棋盘格法）');
+    push('　∵ 雌、雄配子随机结合，每种结合方式的概率 = 该♀配子概率 × 该♂配子概率');
+    push('　∴ 棋盘格如下（行＝♀配子，列＝♂配子，格内＝子代基因型）：');
     const totalPairs=g.eggs.length*g.sperm.length;
-    if(totalPairs>40)L.push('      （网格共 '+totalPairs+' 格，下表列前 40 格）');
-    L.push(grid);
+    const grid=el('table',{class:'rtab punnett'});
+    const hr=el('tr');
+    hr.append(el('th',{class:'corner'},'♀ ＼ ♂'));
+    g.sperm.forEach(s=>hr.append(el('th',{html:gameteHtml(s.g)+'<br><span class="hint">'+rStr(s.pn)+'</span>'})));
+    grid.append(hr);
+    g.eggs.forEach(e=>{
+      const tr=el('tr');
+      tr.append(el('th',{html:gameteHtml(e.g)+'<br><span class="hint">'+rStr(e.pn)+'</span>'}));
+      g.sperm.forEach(s=>{
+        const z=combineZygote(e.g,s.g);
+        const p=rMul(e.pn,s.pn);
+        tr.append(el('td',{html:'<div class="pz">'+genoHtml(z)+'</div><div class="hint">'+rStr(p)+'</div>'}));
+      });
+      grid.append(tr);
+    });
+    push(grid);
+    if(totalPairs>1)push('　· 棋盘格共 '+totalPairs+' 格，每格概率之和应等于 1。');
+
+    /* ── 合并同类项 ── */
     const zb=new Map();
     g.eggs.forEach(e=>g.sperm.forEach(s=>{
       const z=combineZygote(e.g,s.g),k=zKey(z),p=rMul(e.pn,s.pn);
@@ -3302,36 +3348,65 @@ function buildStepsText(g){
       if(ex)ex.p=rAdd(ex.p,p);else zb.set(k,{z,p});
     }));
     const zrows=[...zb.values()].filter(x=>!rIs0(x.p)).sort((a,b)=>rNum(b.p)-rNum(a.p));
+    push('');
+    push('【四】合并同类项（相同基因型的格子概率相加）');
     if(zrows.length){
-      L.push('     合并同类项（相同基因型概率相加）：');
       const t2=el('table',{class:'rtab'});
       t2.append(el('tr',null,el('th',null,'子代基因型'),el('th',null,'概率（分数）'),el('th',null,'概率（百分数）')));
-      zrows.slice(0,40).forEach(v=>{
-        const tr=el('tr');
-        tr.append(el('td',{html:genoHtml(v.z)}));
-        tr.append(el('td',null,rStr(v.p)));
-        tr.append(el('td',null,pctOf(v.p)));
-        t2.append(tr);
+      zrows.forEach(v=>{
+        t2.append(el('tr',null,
+          el('td',{html:genoHtml(v.z)}),
+          el('td',null,rStr(v.p)),
+          el('td',null,pctOf(v.p))));
       });
-      L.push(t2);
-    }
+      push(t2);
+      push('　∴ 子代共 '+zrows.length+' 种基因型。');
+    }else push('　（无存活子代）');
   }
-  L.push('');
-  L.push('【第 4 步】'+(g.name||'该代')+' 基因型汇总（共 '+gs.length+' 种）');
-  gs.slice(0,24).forEach(v=>L.push('    '+stripHtml(genoHtml(v.z))+'　'+rStr(v.pn)+'　→　'+zygPhenotype(v.z)));
-  if(gs.length>24)L.push('    …（共 '+gs.length+' 种，此处只列前 24 种；点「查看全部」看完整明细）');
+
+  /* ── 基因型汇总 ── */
+  push('');
+  push('【五】'+(g.name||'该代')+' 基因型与概率汇总');
+  if(gs.length){
+    const t3=el('table',{class:'rtab'});
+    t3.append(el('tr',null,el('th',null,'基因型'),el('th',null,'概率'),el('th',null,'百分数'),el('th',null,'表型')));
+    const LIM=40;
+    gs.slice(0,LIM).forEach(v=>t3.append(el('tr',null,
+      el('td',{html:genoHtml(v.z)}),el('td',null,rStr(v.p)),el('td',null,pctOf(v.p)),el('td',null,zygPhenotype(v.z)))));
+    push(t3);
+    if(gs.length>LIM)push('　（共 '+gs.length+' 种，此处列出前 '+LIM+' 种）');
+  }else push('　（该代无存活子代）');
+
+  /* ── 致死 ── */
   if(g.raw&&D.dead.length){
-    L.push('');
-    L.push('【第 5 步】致死基因型（合子致死）');
-    D.dead.slice(0,12).forEach(v=>L.push('    '+stripHtml(genoHtml(v.z))+'　致死前概率 '+rStr(v.preP)+
-      (rIs0(v.p)?'　→ 全部死亡（该格不再进入后代）':'')));
-    L.push('    说明：死亡个体的概率被剔除后，存活个体按比例重新归一化（合计为 1）。');
+    push('');
+    push('【六】致死基因型（合子致死）');
+    push('　∵ 下列基因型按设定死亡率死亡');
+    const t4=el('table',{class:'rtab'});
+    t4.append(el('tr',null,el('th',null,'致死基因型'),el('th',null,'致死前概率'),el('th',null,'处理后')));
+    D.dead.slice(0,20).forEach(v=>{
+      t4.append(el('tr',null,
+        el('td',{html:genoHtml(v.z)}),
+        el('td',null,rStr(v.preP)),
+        el('td',null,rIs0(v.p)?'全部死亡（不进入后代）':'存活 '+rStr(v.p))));
+    });
+    push(t4);
+    push('　∴ 死亡个体的概率被剔除后，存活个体按比例重新归一化，合计仍为 1。');
   }
-  L.push('');
-  L.push('【第 6 步】'+(g.name||'该代')+' 表型与比例');
-  ps.forEach(x=>L.push('    '+x.t+'：'+rStr(x.p)+'（'+pctOf(x.p)+'）'));
-  L.push('    表型比 = '+ratioOf(ps));
-  return L.join('\n');
+
+  /* ── 表型 ── */
+  push('');
+  push('【七】'+(g.name||'该代')+' 表型与比例');
+  if(ps.length){
+    const t5=el('table',{class:'rtab'});
+    t5.append(el('tr',null,el('th',null,'表型'),el('th',null,'概率'),el('th',null,'百分数')));
+    ps.forEach(x=>t5.append(el('tr',null,el('td',null,x.t),el('td',null,rStr(x.p)),el('td',null,pctOf(x.p)))));
+    const tot=ps.reduce((a,x)=>rAdd(a,x.p),rZero);
+    t5.append(el('tr',null,el('td',null,'合计'),el('td',null,rStr(tot)),el('td',null,pctOf(tot))));
+    push(t5);
+    push('　∴ '+(g.name||'该代')+' 表型比 = '+ratioOf(ps)+'　（'+ps.length+' 种表型）');
+  }else push('　（该代无存活个体）');
+  return L;
 }
 function individualChromSvg(z){
   const units=buildUnits();
@@ -3457,7 +3532,14 @@ function showGenDetailInner(name){
   const g=lastResult.gens.find(x=>x.name===name);
   if(!g)return;
   wrap.append(el('h4',{class:'sec'},name+' · 计算过程（每步分行）'));
-  wrap.append(el('div',{class:'steps'},buildStepsText(g)));
+  const stepsBox=el('div',{class:'steps'});
+  buildStepsText(g).forEach(x=>{
+    if(x==null)return;
+    if(typeof x==='string')stepsBox.append(el('div',{class:'stepline'},x));
+    else if(x.nodeType)stepsBox.append(x);          /* 表格/棋盘格直接插入 DOM，不能当字符串渲染 */
+    else stepsBox.append(el('div',{class:'stepline'},String(x)));
+  });
+  wrap.append(stepsBox);
   const allGs=genData(g).gs;
   wrap.append(el('h4',{class:'sec'},name+' · 染色体图解（代表个体'+(allGs.length>8?'，共 '+allGs.length+' 种基因型，此处列前 8 种':'')+'）'));
   genData(g).gs.slice(0,8).forEach(v=>{
