@@ -121,7 +121,7 @@
 仓库内附带一套自动化回归测试（需要 Node.js）：
 
 ```
-node test2.js          # 在 Genetics_Calculator-main 目录下运行
+node test.js           # 在本仓库根目录运行
 ```
 
 > 注：测试脚本依赖同目录的 `testdom.js`（极简 DOM 桩）。两个文件仅为开发自检用，**发布时只需 `index.html`**。
@@ -153,11 +153,11 @@ node test2.js          # 在 Genetics_Calculator-main 目录下运行
 2. **连续数值表型的级别数**：当亲本群体含多种基因型时，级别数可能多于 2n+1（因为不同基因型的
    显性等位数不同），这是正确行为；界面提示语仍按"2n+1 级"表述，可能引起误解。
 3. **染色体图在基因很密集时会被压缩**，建议点击染色体对标签单独查看该对（再点一次恢复全部）。
-4. 自检脚本 `test2.js` 依赖同目录的 `testdom.js`（极简 DOM 桩），二者仅供开发自检，发布时只需 `index.html`。
+4. 自检脚本 `test.js` 依赖同目录的 `testdom.js`（极简 DOM 桩），二者仅供开发自检，发布时只需 `index.html`。
 
 如遇功能不生效，请先确认页脚版本号为 v2.7 并强制刷新（Ctrl+F5）。
 
 ---
 
 文件清单：`index.html`（应用本体，单文件离线运行，v2.7）、`README.md`（本说明）、
-`test2.js` + `testdom.js`（可选，自动化回归测试）。
+`test.js` + `testdom.js`（可选，自动化回归测试）。
