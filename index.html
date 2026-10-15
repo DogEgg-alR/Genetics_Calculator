@@ -67,6 +67,12 @@ button.btn.danger{background:transparent;color:var(--danger);border:1px solid va
 .addbtn{border:1px dashed var(--line);background:transparent;color:var(--accent);padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12.5px}
 .chromwrap{background:var(--svg-bg);border:1px solid var(--line);border-radius:12px;padding:6px;overflow-x:auto;margin:8px 0}
 .chromwrap svg{display:block;margin:0 auto}
+.chromtabs{display:flex;gap:6px;flex-wrap:wrap;padding:2px 2px 6px}
+.chromtab{background:transparent;border:1px dashed var(--line);border-radius:999px;padding:2px 9px;font-size:12px;cursor:pointer}
+.chromtab.on{border-style:solid;background:var(--accent-soft)}
+.chromlegend{display:flex;gap:12px;flex-wrap:wrap;padding:6px 4px 2px;font-size:11.5px;color:var(--muted)}
+.chromlegend .lgitem{display:inline-flex;align-items:center;gap:4px}
+.chromlegend .lgitem i{width:10px;height:10px;border-radius:3px;display:inline-block}
 .slotline{cursor:pointer}
 .slotline:hover{filter:brightness(.85)}
 .placeLbl{font-size:12px;cursor:pointer}
@@ -81,6 +87,9 @@ button.btn.danger{background:transparent;color:var(--danger);border:1px solid va
 .gamete-list{font-size:12.5px;color:var(--muted);padding:2px 8px}
 .arrowline{text-align:center;color:var(--muted);font-size:16px;margin:-2px 0}
 table.rtab{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+.tabwrap{overflow-x:auto}
+.steps table.rtab{font-size:12px;white-space:nowrap}
+.steps table.rtab td{padding:4px 6px}
 table.rtab th,table.rtab td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
 table.rtab th{background:var(--accent-soft);font-weight:600}
 .modal{position:fixed;inset:0;background:rgba(10,14,20,.55);z-index:100;display:flex;align-items:flex-end;justify-content:center;padding:0}
@@ -129,7 +138,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:18px 0 30px}
     <div class="mbody" id="mBody"></div>
   </div>
 </div>
-<footer>遗传学多功能计算器 · 单文件离线运行 · 供学习演算使用 · 版本 <b id="ver">v2.6</b>（2026-08-23 分数输入版）</footer>
+<footer>遗传学多功能计算器 · 单文件离线运行 · 供学习演算使用 · 版本 <b id="ver">v2.7</b>（染色体视图 · 反推修复 · 多代性能 · 详细计算过程版）</footer>
 <script>
 
 
@@ -178,14 +187,28 @@ function pctIn(v){/* 输入概率/百分比：'20'或'20%'=20%；'12.5'=12.5%；
   const x=Number(t)||0;return R(Math.round(x*1000),100000)}
 function ratioStr(rs){
   if(!rs.length)return'';
-  const L=rs.reduce((a,r)=>lcm(a,r.d),1);
-  const ns=rs.map(r=>r.n*L/r.d);
-  if(ns.every(Number.isInteger)){
-    const g=ns.reduce((a,b)=>gcd(a,b));
-    const m=ns.map(n=>n/g);
-    if(m.every(x=>x>0)&&Math.max(...m)<=2000000)return m.join(' : ');
+  /* 分母 lcm 可能迅速膨胀（如 1/4、1/8、1/16… 多代组合），超阈值就退化为逐项分数显示，避免卡死 */
+  let L=1,overflow=false;
+  for(const r of rs){L=lcm(L,r.d);if(L>1e9){overflow=true;break}}
+  if(!overflow){
+    const ns=rs.map(r=>r.n*L/r.d);
+    if(ns.every(Number.isInteger)){
+      const g=ns.reduce((a,b)=>gcd(a,b));
+      const m=ns.map(n=>n/g);
+      if(m.every(x=>x>0)&&Math.max(...m)<=2000000)return m.join(' : ');
+    }
   }
   return rs.map(rStr).join(' : ');
+}
+/* 比例字符串缓存：图解里同一比例会被反复渲染 */
+const RATIO_CACHE=new Map();
+function ratioOf(sum){
+  const key=sum.map(e=>{const p=(e.pn!=null?e.pn:e.p);return p.n+'/'+p.d}).join(',');
+  const hit=RATIO_CACHE.get(key);
+  if(hit!=null)return hit;
+  const s=ratioStr(sum.map(e=>(e.pn!=null?e.pn:e.p)));
+  if(RATIO_CACHE.size<2000)RATIO_CACHE.set(key,s);
+  return s;
 }
 function el(tag,attrs){
   const e=document.createElement(tag);
@@ -205,6 +228,22 @@ function sup(s){/* 把 IA 显示为 I<sup>A</sup>：末位小写字母转上标 
 }
 /* ================= 全局状态 ================= */
 function chromDef(){return{pairs:2,ploidy:{},placed:[],rec:{},triMode:'indep',nullG:'dead'}}
+/* ===== 性能：计算缓存 =====
+   多代迭代时同一基因型会被反复处理（自交到后期群体基因型高度重复），
+   配子表与"群体→下一代"结果对同一输入完全相同，故按内容做记忆化。
+   每次点「开始计算 / 开始反推」时清空，避免跨题串味。 */
+function newCalcCaches(){return{gamete:new Map(),self:new Map(),free:new Map(),stat:{hit:0,miss:0}}}
+let CALC=newCalcCaches();
+function calcCacheReset(){CALC=newCalcCaches()}
+function popSig(pop){
+  const arr=pop.map(x=>{
+    const z=x.z||x;
+    const p=(x.pn!=null?x.pn:(x.p||rOne));
+    return zKey(z)+'@'+(p.n+'/'+p.d);
+  });
+  arr.sort();
+  return arr.length+'#'+arr.join(';');
+}
 function freshState(){return{
   simpleCount:1,
   simple:[defSimple(0)],
@@ -224,7 +263,9 @@ function freshState(){return{
     trySex:true,tryLethal:false,tryInter:false,pure:false,     /* 推断范围：伴性/致死/互作/亲本纯合 */
     trySexInf:false,   /* 尝试从性遗传(杂合雌雄不同) */
     pw:{enabled:false,nodes:[{id:1,name:'前体物质',x:80,y:120},{id:2,name:'产物1',x:240,y:120},{id:3,name:'产物2',x:400,y:120}],nextId:4,reactions:[],inhibitions:[]},
-    p1Phen:{},p2Phen:{},obs:[{gen:2,ratio:''}],domUnknown:false,result:null},
+    p1Phen:{},p2Phen:{},obs:[{gen:2,ratio:''}],domUnknown:false,result:null,
+    nGen:1,                    /* 反推：尝试额外基因对数（额外基因 = 未观测到的互补基因，如 cc 上位时未写出的 C/c） */
+    chrom:[{pair:0,col:0},{pair:0,col:1}]},  /* 反推各基因在染色体图上的位置（决定是否连锁/自由组合，默认各占一对） */
   mating:{mode:'cross',p1:null,p2:null,ratio:[1,1]}
 }}
 function defSimple(i){return{letter:LETTERS[i]||'X',dom:'显性性状',rec:'隐性性状',mid:'中间性状',mode:'complete',inherit:'auto',maternal:false,sexDomM:true}}
@@ -274,12 +315,20 @@ function rebuildLoci(){
   ['simple','multi','cyto'].forEach(g=>{
     const ch=S.chrom[g];
     const n=LOC.filter(l=>l.group===g&&!(l.group==='simple'&&l.def.inherit!=='auto')).length;
-    if(ch.pairsAuto!==false)ch.pairs=Math.max(1,Math.min(6,n));
+    /* 默认：每对基因占一对染色体（即自由组合）；用户手动改过对数则以用户设置为准 */
+    if(ch.pairsAuto!==false)ch.pairs=Math.max(1,n);
   });
+  /* 反推基因的染色体位置表：长度随基因数增减（默认每个基因一对染色体） */
+  if(S.rev){
+    const nG=((S.rev.genes||[]).length+revNGen());
+    const ch=S.rev.chrom||(S.rev.chrom=[]);
+    for(let i=0;i<nG;i++)if(!ch[i])ch[i]={pair:i,col:0};
+    ch.length=nG;
+  }
 }
 function locusById(id){return LOC.find(l=>l.id===id)}
 function alleleSyms(l){ // 某基因座全部可选等位基因符号（multi 按等级框顺序展平：高显性在前）
-  if(l.group==='simple'){const c=l.def.letter||'A';return[c,c.toLowerCase()]}
+  if(l.group==='simple'){if(REV_MODE)return revAlleleSyms(l);const c=l.def.letter||'A';return[c,c.toLowerCase()]}
   if(l.group==='multi'){normMulti(l.def);return[].concat(...l.def.tiers.map(t=>t.alleles.map(a=>a.sym)))}
   return l.def.variants.map(v=>v.sym);
 }
@@ -303,13 +352,17 @@ function openModal(title,node){document.getElementById('mTitle').textContent=tit
 /* ================= 左侧配置面板 ================= */
 function txtIn(v,cb){const i=el('input',{type:'text',value:v==null?'':v});i.oninput=()=>cb(i.value.trim());return i}
 function numIn(v,min,max,cb){const i=el('input',{type:'number',value:v,min:min,max:max});i.onchange=()=>{let x=parseInt(i.value);if(isNaN(x))x=min;x=Math.max(min,Math.min(max,x));i.value=x;cb(x)};return i}
-function numInF(v,cb){/* 数值输入：支持 整数/小数/分数(1/7) */
+function numInF(v,cb){/* 数值输入：支持 整数/小数/分数(1/7)
+  说明：把"原始文本"写入状态，读取处统一用 pctIn()/parseNumFrac() 解析——
+  这样"累计效应表型值 = 基础值 + 显性等位数 × 增量"等地方不会再出现 150→15000 这类量纲错误。 */
   const i=el('input',{type:'text',value:v==null?'':v,placeholder:'如 60、12.5 或 1/7'});
-  i.oninput=()=>{const f=parseNumFrac(i.value);cb(f?rNum(f):0)};
+  i.oninput=()=>cb(i.value.trim());
+  i.onchange=()=>{const t=i.value.trim();if(t&&!parseNumFrac(t)){toast('数值写法无效：可填整数（60）、小数（12.5）或分数（1/7）');i.value=v==null?'':v;cb(i.value.trim())}};
   return i}
+function numVal(x,dflt){const f=parseNumFrac(x==null?'':x);return f?rNum(f):dflt}
 function pctInEl(v,cb){/* 概率/百分比输入：支持 '20'/'20%'=20%、'12.5'、'1/7'（分数直接作为比例） */
   const i=el('input',{type:'text',value:v==null?'':v,placeholder:'如 20、12.5 或 1/7'});
-  i.oninput=()=>cb(i.value);return i}
+  i.oninput=()=>cb(i.value.trim());return i}
 function selIn(v,opts,cb){const s=el('select');opts.forEach(o=>{const op=el('option',{value:o[0]},o[1]);if(o[0]===v)op.selected=true;s.append(op)});s.onchange=()=>cb(s.value);return s}
 function chkIn(v,cb,label){const l=el('label',{class:'row'});const i=el('input',{type:'checkbox'});i.checked=!!v;i.onchange=()=>cb(i.checked);l.append(i,el('span',{html:label||''}));return l}
 function simpleLoci(){return LOC.filter(l=>l.group==='simple')}
@@ -333,7 +386,7 @@ function helpPanel(){
    '• 多代计算(自交/自由交配)采用逐代迭代法（等价于马尔可夫链转移矩阵的连乘）。'}));
   return panel('📖 使用说明与定义',b);
 }
-function basicPanel(){
+function basicPanelBody(){
   const b=el('div');
   b.append(el('div',null,chkIn(S.sexEnabled,v=>{
     S.sexEnabled=v;
@@ -357,15 +410,16 @@ function basicPanel(){
   }else{
     b.append(el('div',{class:'hint'},'未勾选：所有基因按常染色体处理，子代不分性别，表型不带（♂/♀）标记。'));
   }
-  return panel('⚙️ 基本设置',b,true);
+  return b;
 }
-function simplePanel(){
+function basicPanel(){return panel('⚙️ 基本设置',basicPanelBody(),true)}
+function simplePanel(){return panel('🧬 核遗传等位基因',simplePanelBody(),S.simpleCount>0)}
+function simplePanelBody(){
   const b=el('div');
   b.append(flRow('等位基因（核遗传二等位）对数',
-    numIn(S.simpleCount,0,10,v=>{S.simpleCount=v;S.mating.p1=S.mating.p2=null;renderConfig()}),
+    numIn(S.simpleCount,0,10,v=>{S.simpleCount=v;S.mating.p1=S.mating.p2=null;softRefresh();refreshPanel('核遗传等位基因');refreshPanel('连锁关系')}),
     el('span',{class:'hint'},'输入 2 即 AaBb 这类两对基因')));
-  const hetero=S.sexSystem==='XY'?'伴X(XY:仅♂有Y)':S.sexSystem==='ZW'?'伴Z(ZW:仅♀有W)':'';
-  const inhOpts=S.sexSystem==='none'?
+  const inhOpts=!S.sexEnabled?
     [['auto','常染色体']]:
     S.sexSystem==='XY'?
     [['auto','常染色体'],['X','伴 X 染色体'],['Y','伴 Y 染色体（限♂传递）'],['both','X、Y 同源区段']]:
@@ -391,11 +445,12 @@ function simplePanel(){
     card.append(chkIn(L.maternal,v=>L.maternal=v,'母系遗传（母性效应：子代该性状由<b>母本基因型</b>决定）'));
     b.append(card);
   });
-  return panel('🧬 核遗传等位基因',b,S.simpleCount>0);
+  return b;
 }
-function multiPanel(){
+function multiPanel(){return panel('🔀 复等位基因',multiPanelBody(),S.multiCount>0)}
+function multiPanelBody(){
   const b=el('div');
-  b.append(flRow('复等位基因数',numIn(S.multiCount,0,5,v=>{S.multiCount=v;S.mating.p1=S.mating.p2=null;renderConfig()}),
+  b.append(flRow('复等位基因数',numIn(S.multiCount,0,5,v=>{S.multiCount=v;S.mating.p1=S.mating.p2=null;softRefresh();refreshPanel('复等位基因');refreshPanel('连锁关系')}),
     el('span',{class:'hint'},'同一基因的 3 个及以上等位基因（如 Iᴬ、Iᴮ、i）')));
   S.multi.forEach((L,i)=>{
     normMulti(L);
@@ -422,7 +477,7 @@ function multiPanel(){
         row.append(el('span',{class:'hint'},'性状'));
         const t=txtIn(a.trait,v=>a.trait=v);t.style.width='110px';
         row.append(t);
-        row.append(el('button',{class:'btn mini danger',onclick:()=>{if(tier.alleles.length>1){tier.alleles.splice(ai,1);renderConfig()}}},'删'));
+        row.append(el('button',{class:'btn mini danger',onclick:()=>{if(tier.alleles.length>1){tier.alleles.splice(ai,1);renderConfig()}else toast('每个等级框至少保留 1 个等位基因；若整框不要请点「删框」')}},'删'));
         box.append(row);
       });
       box.append(el('button',{class:'addbtn',onclick:()=>{tier.alleles.push({sym:'i'+(tier.alleles.length+1),trait:'性状'+(tier.alleles.length+1)});renderConfig()}},'+ 框内增加等位基因（与现有等位共显）'));
@@ -431,11 +486,12 @@ function multiPanel(){
     card.append(el('button',{class:'addbtn',onclick:()=>{L.tiers.push({cls:'rec',alleles:[{sym:'i'+(L.tiers.length+1),trait:'性状'}]});renderConfig()}},'+ 添加等级框（隐性等级）'));
     b.append(card);
   });
-  return panel('🔀 复等位基因',b,S.multiCount>0);
+  return b;
 }
-function cytoPanel(){
+function cytoPanel(){return panel('🫧 细胞质遗传',cytoPanelBody(),S.cytoCount>0)}
+function cytoPanelBody(){
   const b=el('div');
-  b.append(flRow('细胞质遗传基因数',numIn(S.cytoCount,0,5,v=>{S.cytoCount=v;S.mating.p1=S.mating.p2=null;renderConfig()}),
+  b.append(flRow('细胞质遗传基因数',numIn(S.cytoCount,0,5,v=>{S.cytoCount=v;S.mating.p1=S.mating.p2=null;softRefresh();refreshPanel('细胞质遗传');refreshPanel('连锁关系')}),
     el('span',{class:'hint'},'随卵细胞质传递')));
   b.append(el('div',{class:'hint',html:'细胞质基因表现为<b>母系遗传</b>：子代细胞质(及表型)完全由母本决定，正反交结果不同，不遵循孟德尔分离。'}));
   S.cyto.forEach((L,i)=>{
@@ -456,7 +512,7 @@ function cytoPanel(){
     card.append(el('button',{class:'addbtn',onclick:()=>{L.variants.push({sym:'V'+(L.variants.length+1),trait:'性状'+(L.variants.length+1)});renderConfig()}},'+ 增加变体'));
     b.append(card);
   });
-  return panel('🫧 细胞质遗传',b,S.cytoCount>0);
+  return b;
 }
 /* 致死条件编辑（配子/合子共用） */
 function condRowEditor(rule,scope,rerender){
@@ -482,11 +538,12 @@ function condRowEditor(rule,scope,rerender){
   }
   draw();return box;
 }
-function lethalPanel(kind){
+function lethalPanel(kind){return panel(kind==='g'?'💀 配子致死':'⚰️ 合子致死',lethalPanelBody(kind))}
+function lethalPanelBody(kind){
   const st=kind==='g'?S.gLethal:S.zLethal;
   const b=el('div');
   b.append(chkIn(st.enabled,v=>{st.enabled=v;renderConfig()},kind==='g'?'启用配子致死':'启用合子致死'));
-  if(!st.enabled)return panel(kind==='g'?'💀 配子致死':'⚰️ 合子致死',b);
+  if(!st.enabled)return b;
   b.append(el('div',{class:'hint',html:kind==='g'?
     '满足条件的配子按"死亡率"失活（如含 X<sup>B</sup> 的雄配子 50% 死亡）。多个条件之间为<b>且</b>的关系；多条规则之间为<b>或</b>的关系。':
     '满足条件的合子按"死亡率"死亡，存活后代比例重新归一化（经典题型：显性纯合致死 → 2:1）。'}));
@@ -509,8 +566,16 @@ function lethalPanel(kind){
     card.append(condRowEditor(rule,kind==='g'?'gamete':'zygote'));
     b.append(card);
   });
-  b.append(el('button',{class:'addbtn',onclick:()=>{st.rules.push({sex:'both',rate:100,conds:[]});pendingScroll=(kind==='g'?'配子致死':'合子致死');renderConfig()}},'+ 添加规则'));
-  return panel(kind==='g'?'💀 配子致死':'⚰️ 合子致死',b);
+  b.append(el('button',{class:'addbtn',onclick:()=>{
+    st.rules.push({sex:'both',rate:100,conds:[]});
+    const nm=kind==='g'?'配子致死':'合子致死';
+    renderConfig();
+    /* 添加规则后栏目保持展开并滚动到该栏目（不再出现"栏目缩回去、要手动再点开"） */
+    const c=document.getElementById('configPanel');
+    const d=[...c.querySelectorAll('details.panel')].find(x=>x.querySelector('summary').textContent.indexOf(nm)>=0);
+    if(d){d.open=true;PANEL_OPEN[d.querySelector('summary').textContent]=true;try{d.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){}}
+  }},'+ 添加规则'));
+  return b;
 }
 /* 基因互作 */
 const INTER_TYPES=[
@@ -525,12 +590,13 @@ const INTER_TYPES=[
   ['xInact','促进X固缩（显性使其所在的X优先失活为巴氏小体）'],
   ['custom','自定义表型组合表（手动指定各基因型类的表型）']
 ];
-function interPanel(){
+function interPanel(){return panel('🧩 基因互作',interPanelBody(),true)}
+function interPanelBody(){
   const b=el('div');
   const it=S.inter;
   b.append(chkIn(it.enabled,v=>{it.enabled=v;renderConfig()},'启用基因互作'));
-  if(!it.enabled)return panel('🧩 基因互作',b);
-  b.append(flRow('互作类型',selIn(it.type,INTER_TYPES,v=>{it.type=v;renderConfig()})));
+  if(!it.enabled)return b;
+  b.append(flRow('互作类型',selIn(it.type,INTER_TYPES,v=>{it.type=v;refreshPanel('基因互作')})));
   const sl=simpleLoci();
   if(!sl.length){b.append(el('div',{class:'warn'},'基因互作需要至少一对核遗传二等位基因，请先在上方设置。'));}
   if(['complement','recessiveEpi','dominantEpi','inhibitor','duplicate','additive'].includes(it.type)){
@@ -636,7 +702,7 @@ function interPanel(){
       b.append(t);
     }
   }
-  return panel('🧩 基因互作',b,true);
+  return b;
 }
 function presetPanel(){
   const b=el('div');
@@ -651,8 +717,41 @@ function presetPanel(){
   return panel('⭐ 经典题型预设',b);
 }
 function refreshBadges(){/* 字母即时写入状态，界面徽标在下次整体刷新时更新（避免输入时丢失焦点） */}
-/* 符号/字母输入：输入时即时写状态（不丢焦点），失焦(change)时整体刷新——亲本面板、染色体图、致死条件下拉立即显示新符号 */
-function symIn(v,cb){const i=txtIn(v,cb);i.onchange=()=>renderConfig();return i}
+/* 符号/字母输入：输入时即时写状态（不丢焦点），失焦(change)时才刷新界面 */
+function symIn(v,cb){const i=txtIn(v,cb);i.onchange=()=>softRefresh();return i}
+/* 轻量刷新：只重画右侧亲本/计算/图解，或指定的左侧栏目，避免每次失焦都重建整页造成卡顿 */
+function softRefresh(){calcCacheReset();try{renderRun()}catch(e){}try{renderDiagram()}catch(e){}}
+let pendingPanel=null,panelTimer=null;
+function refreshPanel(title){
+  pendingPanel=title;
+  if(panelTimer)return;
+  panelTimer=setTimeout(()=>{
+    panelTimer=null;
+    const t=pendingPanel;pendingPanel=null;
+    if(!t)return;
+    const c=document.getElementById('configPanel');
+    const d=[...c.querySelectorAll('details.panel')].find(x=>x.querySelector('summary').textContent.indexOf(t)>=0);
+    if(!d)return;
+    const open=d.open;
+    const nb=buildPanelBody(t);
+    if(!nb)return;
+    const body=d.querySelector('.body');
+    body.innerHTML='';body.append(nb);
+    d.open=open;
+    PANEL_OPEN[d.querySelector('summary').textContent]=open;
+  },120);
+}
+/* 按栏目名重建该栏目的内容（用于基因字母改名后同步染色体图/亲本选择等） */
+function buildPanelBody(title){
+  if(title.indexOf('核遗传等位基因')>=0)return simplePanelBody();
+  if(title.indexOf('复等位基因')>=0)return multiPanelBody();
+  if(title.indexOf('细胞质遗传')>=0)return cytoPanelBody();
+  if(title.indexOf('连锁关系')>=0)return linkagePanelBody();
+  if(title.indexOf('配子致死')>=0)return lethalPanelBody('g');
+  if(title.indexOf('合子致死')>=0)return lethalPanelBody('z');
+  if(title.indexOf('基因互作')>=0)return interPanelBody();
+  return null;
+}
 /* 改名迁移：基因字母/等位符号改变时，同步更新所有引用旧符号的地方（染色体图放置、亲本基因型、致死条件），避免新旧名称混淆 */
 function migrateAlleleSym(group,idx,oldSym,newSym){
   if(!oldSym||!newSym||oldSym===newSym)return;
@@ -671,6 +770,9 @@ const PAIR_COLORS=['#4f6ef7','#e11d48','#059669','#d97706','#7c3aed','#0891b2'];
 function groupLoci(g){return LOC.filter(l=>l.group===g)}
 function toast(msg){openModal('提示',el('div',{class:'hint',style:'font-size:14px'},msg))}
 function linkagePanel(){
+  return panel('🔗 连锁关系与染色体图',linkagePanelBody(),S.simpleCount>1||S.multiCount>0||S.cytoCount>0);
+}
+function linkagePanelBody(){
   const b=el('div');
   b.append(el('div',{class:'hint',html:'每个基因栏目拥有<b>独立</b>的染色体图（核遗传图内不会出现复等位/细胞质基因）。<b>未放置在图中的基因</b>默认独立遗传（自由组合）；放在同一对染色体上的基因即<b>连锁</b>。<br>操作：<b>逐个等位基因放置</b>——点击下方等位基因标签（如 A 或 a）选中 → 点击某条染色体的横线放置该等位基因。把 A、a 分别放到同一对的两条同源染色体上，即可直观定义相引（AB/ab）或相斥（Ab/aB）。点击已放置的字母可移除。'}));
   const names={simple:'核遗传二等位基因',multi:'复等位基因',cyto:'细胞质基因'};
@@ -683,16 +785,175 @@ function linkagePanel(){
     b.append(card);
   });
   if(!LOC.length)b.append(el('div',{class:'hint'},'当前没有基因需要连锁图。'));
-  return panel('🔗 连锁关系与染色体图',b,S.simpleCount>1||S.multiCount>0||S.cytoCount>0);
+  return b;
+}
+/* 染色体图 —— 基因的"座位"与"相位"由本图决定：
+   ① 基因放在第几对染色体 → 决定它与谁连锁、与谁自由组合；
+   ② 显性等位与隐性等位分别位于哪一条同源染色体 → 决定相引(AB/ab)或相斥(Ab/aB)。
+   为使图上画出的相位与计算所用相位完全一致，未放置的基因会自动挂到空余的染色体对上。 */
+function chromGeneLoci(g){return groupLoci(g).filter(l=>!(l.group==='simple'&&l.def.inherit!=='auto'))}
+function chromLocusName(l){return l?(l.group==='simple'?l.letter:l.def.letter):'?'}
+function chromPlacedAt(ch,p,c,k){return ch.placed.find(pl=>pl.pair===p&&pl.col===c&&pl.slot===k&&pl.col!=null&&pl.sym!=null)}
+function chromRecVal(ch,p,k){
+  const r=ch.rec&&ch.rec[p];
+  if(r==null)return null;
+  const v=(typeof r==='object')?r[k]:undefined;
+  return(v==null||v==='')?null:v;
+}
+function chromCompactSlots(ch){
+  const seen=new Set();
+  ch.placed.slice().sort((a,b)=>a.pair-b.pair||a.col-b.col||a.slot-b.slot).forEach(pl=>{
+    const key=pl.pair+'|'+pl.col;
+    if(seen.has(key))return;
+    pl.slot=0;seen.add(key);
+  });
+  ch.placed.forEach(pl=>{
+    const key=pl.pair+'|'+pl.col;
+    const group=ch.placed.filter(x=>x.pair===pl.pair&&x.col===pl.col);
+    if(group.length<2)return;
+    group.filter(x=>x!==pl&&x.slot===pl.slot).forEach(x=>{x.slot=pl.slot+1});
+  });
+}
+/* 规范染色体图：清理越界/失效放置 → 给每个基因固定一对同源染色体（显性在①、隐性在②）
+   → 压缩位点编号（留下相邻的空位供插入）。这样图上画出的结构就是实际计算所用的结构。 */
+function normalizeChrom(g){
+  const ch=S.chrom&&S.chrom[g];
+  if(!ch)return;
+  const ls=chromGeneLoci(g);
+  ch.pairs=Math.max(1,Math.min(12,ch.pairs|0||1));
+  ch.placed=(ch.placed||[]).filter(x=>x&&x.col!=null&&x.sym!=null&&x.pair>=0&&x.pair<ch.pairs&&ls.some(l=>l.id===x.locus));
+  ch.ploidy=ch.ploidy||{};
+  for(let p=0;p<ch.pairs;p++){
+    if(ch.ploidy[p]==null)ch.ploidy[p]=2;
+    const m=ch.ploidy[p];
+    ch.placed=ch.placed.filter(x=>x.pair!==p||(x.col>=0&&x.col<m));
+  }
+  const order=[];
+  ls.slice().sort((a,b)=>locusSortKey(a.id)<locusSortKey(b.id)?-1:locusSortKey(a.id)>locusSortKey(b.id)?1:0).forEach(l=>{
+    const own=ch.placed.filter(x=>x.locus===l.id);
+    let p=own.length?own[0].pair:-1;
+    /* 已有明确放置（含反推里显式指定"同对即连锁"）→ 尊重它；仅当该对越界、或该基因完全没有放置
+       且它所在的对已被别的基因占用时才另找空对。若无视已指定的对，连锁/自由组合的设定就会失效。 */
+    if(p<0||p>=ch.pairs){
+      p=0;
+      while(p<ch.pairs-1&&ch.placed.some(x=>x.pair===p&&x.slot===0&&locusSortKey(x.locus)<locusSortKey(l.id)))p++;
+    }
+    order.push({l,p:Math.min(p,ch.pairs-1)});
+  });
+  order.forEach(o=>{
+    const syms=alleleSyms(o.l),dom=syms[0],rec=syms.length>1?syms[syms.length-1]:syms[0];
+    const m=ch.ploidy[o.p]||2;
+    const own=ch.placed.filter(x=>x.locus===o.l.id&&x.pair===o.p);
+    const keep=[];
+    [0,1].forEach(c=>{
+      if(c>=m)return;
+      const e=own.find(x=>x.col===c);
+      keep.push({locus:o.l.id,pair:o.p,col:c,slot:e?e.slot:null,sym:e?e.sym:(c===0?dom:rec)});
+    });
+    own.forEach(x=>{if(x.col>1&&x.col<m)keep.push({locus:o.l.id,pair:o.p,col:x.col,slot:x.slot,sym:x.sym})});
+    ch.placed=ch.placed.filter(x=>!(x.locus===o.l.id));
+    keep.forEach(kp=>{
+      if(kp.slot!=null&&kp.slot<16){ch.placed.push(kp);return}
+      const used=new Set(ch.placed.filter(x=>x.pair===kp.pair&&x.col===kp.col).map(x=>x.slot));
+      let sl=0;while(used.has(sl))sl++;
+      kp.slot=sl;ch.placed.push(kp);
+    });
+  });
+  chromCompactSlots(ch);
+  ch.rec=ch.rec||{};
+}
+/* 补齐亲本某基因座的等位基因数组到该位点应有的条数。
+   反推为了搜索速度会给"显性纯合"只写一个等位（如 [B]），若不补齐就会算出"缺体配子"，
+   导致比例全错（9:3:4 被算成 3:5）。补齐规则：按染色体图上该基因座各列的等位对齐，
+   缺的一列取隐性（全隐性纯合）。 */
+function padAlleles(parent,l){
+  if(!parent.all)parent.all={};
+  const arr=parent.all[l.id];
+  const m=(l.group==='cyto')?1:ploidyOfLocus(l);
+  if(arr&&arr.length===m)return;
+  const syms=alleleSyms(l);
+  const def=syms.length>1?syms[syms.length-1]:syms[0];
+  const ch=S.chrom&&S.chrom[l.group];
+  const defByCol={};
+  if(ch)(ch.placed||[]).forEach(x=>{if(x.locus===l.id&&defByCol[x.col]==null)defByCol[x.col]=x.sym});
+  const src=(arr&&arr.length)?arr:[];
+  const out=[];
+  const taken=new Set();
+  /* 反推里"等位数不足"表示该基因座纯合：其余同源染色体补同一个等位。
+     （若按染色体图的显/隐性去补会把 AABB×aabb 变成 AaBb×AaBb，9:3:4 会算成 25:24:15） */
+  if(REV_MODE&&src.length&&src.length<m){
+    const s0=src[0];
+    for(let c=0;c<m;c++)out.push(s0);
+    parent.all[l.id]=out;
+    return;
+  }
+  /* 完全缺失（如反推自动追加的"未写出的互补基因"）：按染色体图补齐，全隐性纯合 */
+  if(!src.length){
+    for(let c=0;c<m;c++)out.push(defByCol[c]!=null?defByCol[c]:def);
+    parent.all[l.id]=out;
+    return;
+  }
+  for(let c=0;c<m;c++){
+    const want=defByCol[c];
+    let idx=-1;
+    if(want!=null)idx=src.findIndex((s,i)=>s===want&&!taken.has(i));
+    if(idx<0)idx=src.findIndex((s,i)=>!taken.has(i)&&i===c);
+    if(idx<0)idx=src.findIndex((s,i)=>!taken.has(i));
+    if(idx>=0){taken.add(idx);out.push(src[idx])}
+    else out.push(want!=null?want:def);
+  }
+  parent.all[l.id]=out;
+}
+/* 点击横线放置：该位点已有字母则替换；该基因已在别处则整体搬移；空位则放入并提示成功 */
+function chromHandleSlotClick(g,pair,col,slot){
+  const ch=S.chrom[g];
+  normalizeChrom(g);
+  if(!selectedChip){toast('请先点击上方等位基因标签（如 A 或 a）选中，再点击染色体上的横线');return}
+  const sep=selectedChip.indexOf('|');
+  if(sep<0){selectedChip=null;toast('请重新选择等位基因标签');return}
+  const locusId=selectedChip.slice(0,sep),sym=selectedChip.slice(sep+1);
+  const l=locusById(locusId);
+  if(!l){toast('该基因已不存在，请重新选择');return}
+  const ex=ch.placed.find(pl=>pl.pair===pair&&pl.col===col&&pl.slot===slot);
+  if(ex){ex.locus=locusId;ex.sym=sym;normalizeChrom(g);renderConfig();chromPlacedModal(g,pair,col,slot,sym);return}
+  const own=ch.placed.filter(pl=>pl.locus===locusId);
+  if(own.length){
+    const tgt=own.find(pl=>pl.pair===pair)||own[0];
+    tgt.pair=pair;tgt.col=col;tgt.slot=slot;
+    own.forEach(pl=>{if(pl!==tgt&&pl.pair===pair)ch.placed=ch.placed.filter(x=>x!==pl)});
+    normalizeChrom(g);renderConfig();chromPlacedModal(g,pair,col,slot,sym);return;
+  }
+  ch.placed.push({pair,col,slot,locus:locusId,sym});
+  normalizeChrom(g);
+  renderConfig();
+  chromPlacedModal(g,pair,col,slot,sym);
+}
+/* 放置成功提示（新增放置与移动/覆盖都提示，并说明连锁与相引/相斥） */
+function chromPlacedModal(g,pair,col,slot,sym){
+  const ch=S.chrom[g];
+  const m=ch.ploidy[pair]||2;
+  const box=el('div');
+  box.append(el('div',{style:'font-size:15px;margin-bottom:6px'},'✅ 放置成功！'));
+  box.append(el('div',{class:'hint',html:'等位基因 <b>'+esc(sym)+'</b> 已放入 <b>第'+(pair+1)+'对染色体</b>（'+
+    (m>2?m+' 条中的第 '+(col+1)+' 条':'第 '+(col+1)+' 条同源染色体')+'，第 '+(slot+1)+' 个基因位点）。'}));
+  box.append(el('div',{class:'hint',html:'① <b>是否连锁</b>：与本对染色体上的其它基因连锁（可在下方填交换值）；若想让某基因<b>自由组合</b>，把它放到<b>另一对</b>染色体上即可。<br>② <b>相引/相斥</b>：把 '+esc(sym)+' 与另一个基因（如 B/b）的等位放到<b>同一条</b>染色体上＝相引；放到<b>两条</b>上＝相斥。'}));
+  box.append(el('div',{class:'row mt'},
+    el('button',{class:'btn ghost',onclick:()=>{ch.placed=ch.placed.filter(pl=>!(pl.pair===pair&&pl.col===col&&pl.slot===slot));modal.hidden=true;renderConfig()}},'↩ 撤销本次放置'),
+    el('button',{class:'btn',onclick:()=>{modal.hidden=true}},'继续')));
+  openModal('染色体图 · 放置成功',box);
 }
 function buildChromEditor(g){
   const ch=S.chrom[g];
-  const ls=groupLoci(g).filter(l=>!(l.group==='simple'&&l.def.inherit!=='auto'));
+  const ls=chromGeneLoci(g);
+  normalizeChrom(g);
   const wrap=el('div');
   const ctl=el('div',{class:'row'});
-  ctl.append(el('span',{class:'hint'},'染色体对数（默认=基因数，即每对基因一对染色体）'));
-  ctl.append(numIn(ch.pairs,1,6,v=>{ch.pairs=v;ch.pairsAuto=false;renderConfig()}));
+  ctl.append(el('span',{class:'hint'},'本栏目染色体对数'));
+  ctl.append(numIn(ch.pairs,1,12,v=>{ch.pairs=v;ch.pairsAuto=false;S.mating.p1=S.mating.p2=null;renderConfig()}));
+  ctl.append(el('button',{class:'btn mini ghost',onclick:()=>{ch.pairsAuto=true;S.mating.p1=S.mating.p2=null;renderConfig()}},'↺ 跟随基因数'));
+  ctl.append(el('button',{class:'btn mini ghost',onclick:()=>{ch.placed=[];ch.rec={};renderConfig()}},'清空本图'));
   wrap.append(ctl);
+  wrap.append(el('div',{class:'hint',html:'默认 <b>每对基因各占一对染色体</b>（独立遗传 / 自由组合）；要把两个基因设为<b>连锁</b>，把它们放到<b>同一对</b>染色体上并填交换值。图中<b>未放置</b>的基因会自动排到空余的染色体对上——图上的结构就是实际计算用的结构。'}));
   const chipRow=el('div',{class:'row'});
   chipRow.append(el('span',{class:'hint'},'等位基因：'));
   ls.forEach(l=>{
@@ -703,106 +964,158 @@ function buildChromEditor(g){
       chipRow.append(c);
     });
   });
-  if(ls.length<groupLoci(g).length)chipRow.append(el('span',{class:'hint'},'（伴性基因不参与常染色体图）'));
+  if(ls.length<groupLoci(g).length)chipRow.append(el('span',{class:'hint'},'（伴性基因不参与常染色体图；复等位基因按符号逐个放置，用法与二等位相同）'));
   wrap.append(chipRow);
-  wrap.append(el('div',{class:'hint',html:'点击选中某个<b>等位基因</b>（如 A 或 a），再点击染色体横线放置。把 A、a 分别放到同一对的两条同源染色体上即可定义相引（AB/ab）或相斥（Ab/aB）。'}));
-  wrap.append(drawChromSVG(g,ls));
+  wrap.append(el('div',{class:'hint',html:'操作：点上方 <b>A / a</b> 等标签选中 → 点染色体上的横线放置（再点其它位置＝移动，点字母＝删除）。<b>每个基因一对同源染色体：显性在①、隐性在②</b>（全隐性纯合如 aa 时两条都是 a）。'}));
+  wrap.append(drawChromSVG(g));
+  const chips=el('div',{class:'row'});
+  chips.append(el('span',{class:'hint'},'本图各基因所在染色体：'));
+  ls.forEach(l=>{
+    const pls=ch.placed.filter(pl=>pl.locus===l.id).sort((a,b)=>a.pair-b.pair||a.col-b.col);
+    if(!pls.length){chips.append(el('span',{class:'chip'},chromLocusName(l)+'：未放置'));return}
+    const p=pls[0].pair,m=ch.ploidy[p]||2;
+    const combos=pls.filter(pl=>pl.pair===p).map(pl=>pl.sym).join('/');
+    chips.append(el('span',{class:'chip'+(m>2?' sel':'')},chromLocusName(l)+'：第'+(p+1)+'对 · '+combos));
+  });
+  wrap.append(chips);
   for(let p=0;p<ch.pairs;p++){
-    const row=el('div',{class:'row'});
+    const row=el('div',{class:'row',style:'margin:4px 0'});
     row.append(el('span',{class:'badge'},'第'+(p+1)+'对'));
-    row.append(el('span',{class:'hint'},'染色体条数'));
-    row.append(selIn(ch.ploidy[p]||2,[[2,'2（正常）'],[3,'3（三体）'],[4,'4（四体）']],v=>{ch.ploidy[p]=+v;S.mating.p1=S.mating.p2=null;renderConfig()}));
-    const placed=ch.placed.filter(x=>x.pair===p&&x.col!=null&&x.sym!=null&&ls.some(l=>l.id===x.locus));
-    const seenL=new Set(),dedup=[];
-    placed.slice().sort((a,b)=>a.slot-b.slot).forEach(x=>{if(!seenL.has(x.locus)){seenL.add(x.locus);dedup.push(x)}});
-    if(!ch.rec[p])ch.rec[p]=[];
+    row.append(el('span',{class:'hint'},'条数'));
+    row.append(selIn((ch.ploidy[p]||2),[['2','2（正常二倍）'],['3','3（三体）'],['4','4（四体）'],['5','5（五体）'],['6','6（六体）']],v=>{ch.ploidy[p]=+v;S.mating.p1=S.mating.p2=null;renderConfig()}));
+    const placed=ch.placed.filter(x=>x.pair===p&&x.col!=null&&x.sym!=null&&ls.some(l=>l.id===x.locus)).sort((a,b)=>a.slot-b.slot);
+    const seen=new Set(),dedup=[];
+    placed.forEach(x=>{if(!seen.has(x.locus)){seen.add(x.locus);dedup.push(x)}});
     for(let k=0;k<dedup.length-1;k++){
       const A=locusById(dedup[k].locus),B=locusById(dedup[k+1].locus);
-      const nm=x=>x?(x.group==='simple'?x.letter:x.def.letter):'?';
-      const v=(ch.rec[p][k]==null||ch.rec[p][k]==='')?50:ch.rec[p][k];
-      row.append(el('span',{class:'hint'},nm(A)+'—'+nm(B)));
-      const inp=el('input',{type:'text',value:v,style:'width:64px',placeholder:'如20或1/7'});
-      inp.oninput=()=>{ch.rec[p][k]=inp.value};
+      const v=(chromRecVal(ch,p,k)==null)?50:chromRecVal(ch,p,k);
+      row.append(el('span',{class:'hint'},chromLocusName(A)+'—'+chromLocusName(B)+' 交换值'));
+      const inp=el('input',{type:'text',value:v,style:'width:66px',placeholder:'如20或1/7'});
+      inp.oninput=()=>{if(!ch.rec[p])ch.rec[p]={};ch.rec[p][k]=inp.value};
+      inp.onchange=()=>softRefresh();
       row.append(inp);
-      row.append(el('span',{class:'hint'},'%（可填分数）'));
+      row.append(el('span',{class:'hint'},'%'));
     }
+    if(!dedup.length)row.append(el('span',{class:'hint'},'（暂无基因）'));
     wrap.append(row);
   }
-  if(Object.values(ch.ploidy).some(m=>m>2)){
-    wrap.append(flRow('多拷贝染色体分配方式',selIn(ch.triMode||'indep',[
-      ['indep','独立分配：每条染色体各自 50% 概率进入配子'],
-      ['to21','n:1 交替式：只产生两类互补配子（如三体 AA/A 各 1/2）']
-    ],v=>ch.triMode=v)));
-    wrap.append(flRow('进入 0 条的配子',selIn(ch.nullG||'dead',[['dead','视为致死（剔除后归一化）'],['alive','存活（缺体配子，显示为 O）']],v=>ch.nullG=v)));
+  if(Object.keys(ch.ploidy).some(k=>(ch.ploidy[k]||2)>2)){
+    wrap.append(flRow('多拷贝染色体（三体等）的配子分配',selIn(ch.triMode||'indep',[
+      ['indep','独立分配：每条染色体各 50% 概率进入配子（三体 → n+1 : n = 1 : 1，也可能出现 0 条的缺体配子）'],
+      ['to21','严格 n:1 交替式：只产生互补的 n+1 与 n 两类配子（各 1/2）']
+    ],v=>{ch.triMode=v;renderConfig()})));
+    wrap.append(flRow('进入 0 条的配子（缺体）',selIn(ch.nullG||'dead',[['dead','视为致死（剔除后按存活配子归一化）'],['alive','存活（缺体配子，记作 O）']],v=>{ch.nullG=v;renderConfig()})));
   }
-  if(g==='cyto')wrap.append(el('div',{class:'hint'},'注：细胞质基因实际随母本细胞质整体传递（恒为母系遗传），本图仅作位置标注。'));
+  if(g==='cyto')wrap.append(el('div',{class:'hint'},'注：细胞质基因随<b>卵细胞质</b>整体传递（恒为母系遗传，正反交结果不同），此图仅标注其符号与组合；细胞质基因不参与核内的分离与自由组合。'));
   return wrap;
 }
-function drawChromSVG(g,ls){
+/* 染色体图（细胞视图）：
+   · 椭圆＝细胞，竖线＝染色体（彩色区分不同对的同源染色体），短横线＝基因位点；
+   · 小圆＝着丝粒，三体等多拷贝染色体明显更长，缺体（0 条）以虚线空位表示；
+   · 基因字母统一放在竖线左侧、偏移量很小，不与竖线或横线重叠。 */
+function drawChromSVG(g){
   const ch=S.chrom[g];
-  const slots=Math.max(1,ls.length);
-  const H=36+slots*22;
+  const ls=chromGeneLoci(g);
+  normalizeChrom(g);
+  const slotMax=Math.max(1,ls.length);
   let maxM=2;for(let p=0;p<ch.pairs;p++)maxM=Math.max(maxM,ch.ploidy[p]||2);
-  const SP=22;               /* 同源染色体间距 */
-  const colW=Math.max(100,maxM*SP+64);
-  const W=Math.max(190,24+ch.pairs*colW);
-  const Ht=H+46;
-  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  const SP=26;
+  const colW=Math.max(124,maxM*SP+56);
+  const cellW=Math.max(240,24+ch.pairs*colW);
+  const yTop=58,barH=64+slotMax*26;
+  const cellH=barH+30;
+  const W=cellW,Ht=yTop+cellH+92;
+  const ns='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(ns,'svg');
   svg.setAttribute('width',W);svg.setAttribute('height',Ht);
   svg.setAttribute('viewBox','0 0 '+W+' '+Ht);
   svg.style.color='var(--text)';
-  const mk=(t,a)=>{const e=document.createElementNS('http://www.w3.org/2000/svg',t);for(const k in a)e.setAttribute(k,a[k]);return e};
-  svg.append(mk('circle',{cx:W/2,cy:Ht/2,r:Math.sqrt((W/2+4)*(W/2+4)+(Ht/2+4)*(Ht/2+4)),fill:'none',stroke:'currentColor','stroke-width':1.2,opacity:.45}));
-  const yTop=12;
+  const mk=(t,a,txt)=>{const e=document.createElementNS(ns,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e};
+  const yMid=yTop+barH/2;
+  svg.append(mk('ellipse',{cx:W/2,cy:yTop+cellH/2,rx:Math.max(60,cellW/2-6),ry:cellH/2+8,fill:'var(--svg-bg)',stroke:'currentColor','stroke-width':1.1,opacity:.5}));
+  svg.append(mk('text',{x:W/2,y:yTop-16,'text-anchor':'middle','font-size':10.5,fill:'currentColor',opacity:.6},'细胞（每条竖线＝一条染色体，短横线＝基因位点；小圆＝着丝粒）'));
+  const tabs=el('div',{class:'chromtabs'});
+  for(let p=0;p<ch.pairs;p++){
+    const m=ch.ploidy[p]||2,color=PAIR_COLORS[p%PAIR_COLORS.length];
+    const tab=el('button',{class:'chromtab'+(S.chromFocus===p?' on':''),title:'只显示第'+(p+1)+'对染色体'},'第'+(p+1)+'对 · '+m+'条');
+    tab.style.borderColor=color;tab.style.color=color;
+    tab.onclick=()=>{S.chromFocus=S.chromFocus===p?null:p;renderConfig()};
+    tabs.append(tab);
+  }
   for(let p=0;p<ch.pairs;p++){
     const m=ch.ploidy[p]||2;
-    const xc=24+colW*p+colW/2;
+    const xc=12+colW*p+colW/2;
     const color=PAIR_COLORS[p%PAIR_COLORS.length];
+    const fade=(S.chromFocus!=null&&S.chromFocus!==p)?0.2:1;
+    const half=(m>1?(m-1)*SP/2:0);
+    const colCx=c=>xc-half+c*SP;
     for(let c=0;c<m;c++){
-      const x=xc-(m-1)*SP/2+c*SP;
-      svg.append(mk('line',{x1:x,y1:yTop,x2:x,y2:yTop+H,stroke:color,'stroke-width':3,'stroke-linecap':'round',opacity:.9}));
-      svg.append(mk('circle',{cx:x,cy:yTop+H/2,r:2.6,fill:color}));
-      for(let k=0;k<slots;k++){
-        const y=yTop+(k+0.7)*(H/slots);
-        const placedHere=ch.placed.find(pl=>pl.pair===p&&pl.col===c&&pl.slot===k&&pl.col!=null&&pl.sym!=null);
-        svg.append(mk('line',{x1:x-11,y1:y,x2:x+11,y2:y,stroke:color,'stroke-width':1.4,opacity:.8}));
-        if(placedHere){
-          /* 字母放在竖线左侧，紧贴竖线不重叠 */
-          const txt=mk('text',{x:x-4,y:y+3.5,'text-anchor':'end','font-size':10.5,'font-weight':700,fill:color,cursor:'pointer'});
-          txt.textContent=placedHere.sym;
-          txt.addEventListener('click',ev=>{
-            ev.stopPropagation();
-            ch.placed=ch.placed.filter(pl=>!(pl.pair===p&&pl.col===c&&pl.slot===k));
-            renderConfig();
-          });
-          svg.append(txt);
-        }
-        const hit=mk('rect',{x:x-12,y:y-9,width:34,height:18,fill:'transparent',cursor:'pointer'});
-        hit.addEventListener('click',()=>{
-          const ex=ch.placed.find(pl=>pl.pair===p&&pl.col===c&&pl.slot===k);
-          if(ex){ch.placed=ch.placed.filter(pl=>!(pl.pair===p&&pl.col===c&&pl.slot===k));renderConfig();return}
-          if(!selectedChip){toast('请先点击上方等位基因标签（如 A 或 a）选中，再点击染色体上的横线');return}
-          const sep=selectedChip.indexOf('|');
-          const locusId=selectedChip.slice(0,sep),sym=selectedChip.slice(sep+1);
-          ch.placed.push({pair:p,col:c,slot:k,locus:locusId,sym});
-          renderConfig();
-          const l=locusById(locusId);
-          const box=el('div');
-          box.append(el('div',{style:'font-size:15px;margin-bottom:6px'},'✅ 放置成功！'));
-          box.append(el('div',{class:'hint',html:'等位基因 <b>'+esc(sym)+'</b> 已放置到 <b>第'+(p+1)+'对染色体</b>（'+(m>2?m+' 条中的第'+(c+1)+'条':'同源染色体第'+(c+1)+'条')+'，第'+(k+1)+'个基因位点）。<br>提示：可将它的等位基因（'+esc(alleleSyms(l).filter(s=>s!==sym).join('、'))+'）放到同对的另一条染色体上，以构成相引或相斥；同一对染色体上的基因之间即连锁，可在下方设置交换值。'}));
-          box.append(el('div',{class:'row mt'},
-            el('button',{class:'btn ghost',onclick:()=>{ch.placed=ch.placed.filter(pl=>!(pl.pair===p&&pl.col===c&&pl.slot===k));modal.hidden=true;renderConfig()}},'↩ 撤销本次放置'),
-            el('button',{class:'btn',onclick:()=>{modal.hidden=true}},'继续')));
-          openModal('染色体图 · 放置成功',box);
+      const x=colCx(c);
+      if(m>1){
+        svg.append(mk('line',{x1:x,y1:yTop,x2:x,y2:yTop+barH,stroke:color,'stroke-width':4,'stroke-linecap':'round',opacity:fade}));
+        [barH*0.3,barH*0.6,barH*0.86].forEach((by,bi)=>{
+          svg.append(mk('line',{x1:x-4,y1:yTop+by,x2:x+4,y2:yTop+by,stroke:color,'stroke-width':1.6,opacity:fade*(bi===0?0.85:0.5)}));
         });
-        svg.append(hit);
       }
+      for(let k=0;k<slotMax;k++){
+        const y=yTop+(k+0.78)*(barH/slotMax);
+        svg.append(mk('line',{x1:x-12,y1:y,x2:x+12,y2:y,stroke:color,'stroke-width':1.5,opacity:m>1?fade*0.9:0.35}));
+        if(m>1){
+          const pl=chromPlacedAt(ch,p,c,k);
+          if(pl){
+            const t=mk('text',{x:x-6,y:y+3.6,'text-anchor':'end','font-size':11.5,'font-weight':700,fill:color,cursor:'pointer'},pl.sym);
+            t.addEventListener('click',ev=>{ev.stopPropagation();ch.placed=ch.placed.filter(q=>!(q.pair===p&&q.col===c&&q.slot===k));renderConfig()});
+            svg.append(t);
+          }
+        }
+        if(m>1){
+          const hit=mk('rect',{x:x-19,y:y-10,width:38,height:20,fill:'transparent',cursor:'pointer'});
+          hit.addEventListener('click',()=>chromHandleSlotClick(g,p,c,k));
+          svg.append(hit);
+        }
+      }
+      if(m>1)svg.append(mk('circle',{cx:x,cy:yMid,r:4.5,fill:'var(--panel)',stroke:color,'stroke-width':2,opacity:fade}));
+      const lab=m>1?String(c+1):'O';
+      svg.append(mk('text',{x:x,y:yTop-5,'text-anchor':'middle','font-size':10,'font-weight':700,fill:color,opacity:fade},lab));
     }
-    const lb=mk('text',{x:xc,y:yTop+H+16,'text-anchor':'middle','font-size':10.5,fill:'currentColor',opacity:.75});
-    lb.textContent='第'+(p+1)+'对'+(m>2?'（'+m+'条）':'');
-    svg.append(lb);
+    if(m<=1){
+      for(let k=0;k<slotMax;k++){
+        const y=yTop+(k+0.78)*(barH/slotMax);
+        for(let c=0;c<2;c++){
+          const x=colCx(c);
+          svg.append(mk('line',{x1:x-11,y1:y,x2:x+11,y2:y,stroke:'currentColor','stroke-width':1.2,'stroke-dasharray':'3,3',opacity:0.3}));
+          const hit=mk('rect',{x:x-18,y:y-10,width:36,height:20,fill:'transparent',cursor:'pointer'});
+          hit.addEventListener('click',()=>chromHandleSlotClick(g,p,c,k));
+          svg.append(hit);
+        }
+      }
+      svg.append(mk('text',{x:xc,y:yMid+4,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'var(--danger)',opacity:fade},'O'));
+    }
+    const labs=m>2?(['三体 2n+1','四体','五体','六体'][m-3]||''):'';
+    svg.append(mk('text',{x:xc,y:yTop+barH+32,'text-anchor':'middle','font-size':10.5,'font-weight':700,fill:color,opacity:fade},'第'+(p+1)+'对'+(m>2?'（'+m+' 条 · '+labs+'）':(m<=1?'（缺体 2n-2）':'（2 条）'))));
   }
-  return el('div',{class:'chromwrap'},svg);
+  const optRow=el('div',{class:'row'});
+  optRow.append(el('span',{class:'hint'},'染色体对数'));
+  optRow.append(numIn(ch.pairs,1,12,v=>{ch.pairs=v;ch.pairsAuto=false;S.mating.p1=S.mating.p2=null;renderConfig()}));
+  const addP=el('button',{class:'btn mini ghost'},'+ 增加一对');
+  addP.onclick=()=>{ch.pairs=Math.min(12,ch.pairs+1);ch.pairsAuto=false;renderConfig()};
+  const delP=el('button',{class:'btn mini ghost'},'− 减少一对');
+  delP.onclick=()=>{if(ch.pairs>1){ch.pairs--;ch.pairsAuto=false;renderConfig()}else toast('至少保留一对染色体')};
+  optRow.append(addP,delP);
+  optRow.append(el('span',{class:'hint'},'增加染色体对可以让某些基因移到另一对上 → 它们即从"连锁"变为"自由组合"'));
+  const lg=el('div',{class:'chromlegend'});
+  for(let p=0;p<ch.pairs;p++){
+    const item=el('span',{class:'lgitem'});
+    item.append(el('i',{style:'background:'+PAIR_COLORS[p%PAIR_COLORS.length]}),document.createTextNode('第'+(p+1)+'对·'+(ch.ploidy[p]||2)+'条'));
+    lg.append(item);
+  }
+  lg.append(el('span',{class:'lgitem'},'○ 着丝粒'));
+  lg.append(el('span',{class:'lgitem'},'− 基因位点'));
+  const box=el('div',{class:'chromwrap'});
+  box.append(tabs,svg,optRow,lg);
+  if(S.chromFocus!=null&&S.chromFocus<ch.pairs)box.append(el('div',{class:'hint'},'当前只显示第 '+(S.chromFocus+1)+' 对（再点该标签恢复全部）'));
+  if(!ls.length)box.append(el('div',{class:'hint'},'本栏目暂无基因，请先在上方栏目增加基因。'));
+  return box;
 }
 /* ================= 右侧：亲本设置与运行 ================= */
 function ploidyOfLocus(l){
@@ -869,6 +1182,7 @@ function parentCard(title,parent,sexRole){
     }
     const m0=ploidyOfLocus(l);
     if(!parent.all[l.id])parent.all[l.id]=defaultAlleles(l,sexRole);
+    if(m0===1)row.append(el('span',{class:'hint'},'（缺体：本亲本该对染色体为 0 条，配子一律为 O）'));
     if(m0>2){
       const cur=(parent.all[l.id]||[]).filter(x=>x!=null).length||m0;
       row.append(el('span',{class:'hint'},'本亲本条数'));
@@ -973,10 +1287,10 @@ function forwardChain(p1,p2,mode,N,nextMode,ratio){
   let eg,sp,r;
   if(mode==='self'){
     eg=makeGametes(p1,'F');sp=makeGametes(p1,'M');r=doCross(eg.list,sp.list);
-    gens.push({name:'F1',pop:r.zygs,raw:r.raw,eggs:eg.list,sperm:sp.list,notes:[...eg.notes,...sp.notes,...r.notes],parents:[p1]});
+    gens.push({name:'F1',pop:r.zygs,raw:r.raw,eggs:eg.list,sperm:sp.list,notes:['亲本自交：同一亲本既产生雌配子也产生雄配子',...eg.notes,...sp.notes,...r.notes],parents:[p1]});
   }else if(mode==='cross'){
     eg=makeGametes(p1,'F');sp=makeGametes(p2,'M');r=doCross(eg.list,sp.list);
-    gens.push({name:'F1',pop:r.zygs,raw:r.raw,eggs:eg.list,sperm:sp.list,notes:[...eg.notes,...sp.notes,...r.notes],parents:[p1,p2]});
+    gens.push({name:'F1',pop:r.zygs,raw:r.raw,eggs:eg.list,sperm:sp.list,notes:['P♀ × P♂ 杂交 → F1',...eg.notes,...sp.notes,...r.notes],parents:[p1,p2]});
   }else{
     const a=(ratio&&ratio[0])||1,b=(ratio&&ratio[1])||1;
     gens.push({name:'F1',pop:freePop([{z:p1,p:R(a,a+b)},{z:p2,p:R(b,a+b)}]),notes:['两种亲本按 '+a+' : '+b+' 混合，雌雄配子随机结合（自由交配）→ F1']});
@@ -986,9 +1300,9 @@ function forwardChain(p1,p2,mode,N,nextMode,ratio){
     const prev=gens[gens.length-1];
     if(!prev.pop.length){gens.push({name:'F'+g,pop:[],notes:['⚠ 上一代无存活个体，本代为空']});continue}
     if(mode==='free'||nextMode==='free')
-      gens.push({name:'F'+g,pop:freePop(prev.pop),notes:['F'+(g-1)+' 群体内随机交配（配子随机结合）→ F'+g]});
+      gens.push({name:'F'+g,pop:freePop(prev.pop),notes:['F'+(g-1)+' 群体内随机交配（配子随机结合）→ F'+g+'（自由交配时基因型频率趋于哈代-温伯格平衡）']});
     else
-      gens.push({name:'F'+g,pop:selfPop(prev.pop),notes:['F'+(g-1)+' 各基因型分别自交（逐代迭代，等价于马尔可夫链转移矩阵连乘）→ F'+g]});
+      gens.push({name:'F'+g,pop:selfPop(prev.pop),notes:['F'+(g-1)+' 各基因型分别自交（逐代迭代，等价于马尔可夫链转移矩阵连乘）→ F'+g+'（杂合子逐代减少，纯合子逐代增加）']});
   }
   step(); /* 末代展示同样应用剔除 */
   gens.forEach(g=>{if(!g.pop.length&&!g.notes.some(n=>n.indexOf('无存活')>=0))g.notes.push('⚠ 该世代无存活个体（可能全部致死）')});
@@ -1111,34 +1425,99 @@ function revPhenoSummary(pop){
 }
 /* 假设配置：按反推基因 + 枚举的传递方式/致死/互作/显隐翻转/表型分配，临时改写全局 S */
 function applyRevHypothesis(hyp){
+  const nAllG=revGeneCount();
+  if(!hyp.inh||hyp.inh.length<nAllG){const a=(hyp.inh||[]).slice();while(a.length<nAllG)a.push('auto');hyp.inh=a;}
+  if(!hyp.let||hyp.let.length<nAllG){const a=(hyp.let||[]).slice();while(a.length<nAllG)a.push('none');hyp.let=a;}
+  if(!hyp.flip||hyp.flip.length<nAllG){const a=(hyp.flip||[]).slice();while(a.length<nAllG)a.push('complete');hyp.flip=a;}
+  if(!hyp.domMode||hyp.domMode.length<nAllG){const a=(hyp.domMode||[]).slice();while(a.length<nAllG)a.push('complete');hyp.domMode=a;}
   const genes=hyp.genes;
+  /* 先把用户基因数组对齐到用户填写的数量：revGeneInfo / revGeneLetter 依赖它来确定
+     "额外基因"从第几个开始（多留会顶掉用户的基因，比如 B 被当成额外基因、C 顶上） */
+  genes.length=Math.min(genes.length,((S.rev&&S.rev.genes)||[]).length);
   const defDom=g=>g.dom||'显性性状', defRec=g=>g.rec||'隐性性状';
   /* 显隐模式（domMode）：complete / sexInfM·sexInfF（从性，杂合雌雄不同） */
   const dmOf=i=>hyp.domMode?hyp.domMode[i]:'complete';
   /* 表型分配：单基因非互作时取 2 槽（显/隐） */
   const asOf=()=>(hyp.inter==='none'&&genes.length===1&&hyp.assign&&hyp.assign.length>=2)?hyp.assign:null;
-  S.simpleCount=genes.length;
-  S.simple=genes.map((g,i)=>{
-    const as=asOf(),dm=dmOf(i);
-    return {letter:g.letter,
-      dom:as?as[0]:defDom(g),
-      rec:as?as[as.length-1]:defRec(g),
+  /* 反推基因 → 染色体摆放（rev.chrom[i].pair 决定第几对染色体；同对即连锁） */
+  const chrom=S.rev.chrom||[];
+  const pairs=[];
+  const genLinkPair=genIdx=>{
+    const c=chrom[genIdx];
+    if(c&&c.pair!=null)return c.pair;
+    return genIdx; /* 未指定 → 每个基因各占一对染色体（自由组合，符合默认设定） */
+  };
+  genes.forEach((g,i)=>{
+    const p=genLinkPair(i);
+    if(!pairs[p])pairs[p]=[];
+    pairs[p].push(i);
+  });
+  const extraN=revNGen();
+  const nAll=genes.length+extraN;
+  /* 全部基因（含自动追加的"未写出的互补基因"）：未指定位置的各占一对染色体 → 自由组合 */
+  const geneInfo=[];
+  for(let i=0;i<nAll;i++)geneInfo.push(revGeneInfo(i));
+  for(let i=0;i<nAll;i++){
+    const p=genLinkPair(i);
+    if(!pairs[p])pairs[p]=[];
+    pairs[p].push(i);
+  }
+  const linkPairOf={};
+  pairs.forEach((idxs,p)=>{
+    if(!idxs||!idxs.length)return;
+    const uniq=[...new Set(idxs)];
+    uniq.forEach(i=>{linkPairOf[i]=p});
+  });
+  const revSyms=null;
+  S.simpleCount=nAll;
+  S.simple=geneInfo.map((gi,i)=>{
+    const as=(i===0)?asOf():null,dm=dmOf(i);
+    return {letter:gi.dletter,
+      dom:as?as[0]:(gi.dom||''),
+      rec:as?as[as.length-1]:(gi.rec||''),
       mid:(as&&as.length===3)?as[1]:'',
       mode:(dm&&dm.indexOf('sexInf')===0)?'sexInfluenced':'complete',
       inherit:hyp.inh[i],maternal:false,
+      /* reverseExtra：反推自动追加的"未写出的互补基因"，只在被上位掩盖时参与表型，
+         平时不写进表型描述，保证与题面表型名一致（不然 9:3:4 匹配不上） */
+      reverseExtra:!!gi.extra,
       sexDomM:dm!=='sexInfF'}; /* sexInfM=雄显雌隐(默认)，sexInfF=雄隐雌显 */
   });
-  S.multiCount=0;S.multi=[];S.cytoCount=0;S.cyto=[];
-  S.chrom={simple:chromDef(),multi:chromDef(),cyto:chromDef()}; /* 反推不使用连锁图 */
+  S.multiCount=0;S.multi=[];
+  S.cytoCount=0;S.cyto=[];
+  S.chrom={simple:chromDef(),multi:chromDef(),cyto:chromDef()};
+  /* 把"基因在染色体上的位置"真正落到染色体图上：同对即连锁，未指定的各占一对 */
+  const chS=S.chrom.simple;
+  chS.pairs=Math.max(1,nAll,pairs.length);
+  chS.pairsAuto=false;
+  geneInfo.forEach((gi,i)=>{
+    const p=genLinkPair(i);
+    chS.placed.push({pair:Math.min(p,chS.pairs-1),col:0,slot:i,locus:'n'+i,sym:gi.dletter});
+    chS.placed.push({pair:Math.min(p,chS.pairs-1),col:1,slot:i,locus:'n'+i,sym:gi.dletter.toLowerCase()});
+  });
+  const recStr=(S.rev.rec==null||S.rev.rec==='')?null:S.rev.rec;
+  if(recStr!=null){
+    const byP={};
+    geneInfo.forEach((gi,i)=>{
+      const p=genLinkPair(i);
+      (byP[p]=byP[p]||[]).push(i);
+    });
+    Object.keys(byP).forEach(k=>{
+      const list=byP[k];
+      if(list.length>1){chS.rec[k]={};for(let j=0;j<list.length-1;j++)chS.rec[k][j]=recStr}
+    });
+  }
+  const allLeth={enabled:false,rules:[]};
+  const zr=[];
+  geneInfo.forEach((gi,i)=>{
+    const lt=hyp.let[i];
+    if(lt==='domHom')zr.push({rate:100,conds:[{locus:'n'+i,allele:gi.dletter,type:'hom'}]});
+    if(lt==='recHom')zr.push({rate:100,conds:[{locus:'n'+i,allele:gi.dletter.toLowerCase(),type:'hom'}]});
+  });
+  S.zLethal={enabled:zr.length>0,rules:zr};
   const hasSex=hyp.inh.some(x=>x!=='auto')||genes.some((g,i)=>dmOf(i).indexOf('sexInf')===0);
   S.sexEnabled=hasSex;S.sexSystem=hasSex?'XY':'none';S.barr=false;
   S.gLethal={enabled:false,rules:[]};
-  const zr=[];
-  genes.forEach((g,i)=>{
-    if(hyp.let[i]==='domHom')zr.push({rate:100,conds:[{locus:'n'+i,allele:g.letter,type:'hom'}]});
-    if(hyp.let[i]==='recHom')zr.push({rate:100,conds:[{locus:'n'+i,allele:g.letter.toLowerCase(),type:'hom'}]});
-  });
-  S.zLethal={enabled:zr.length>0,rules:zr};
   const IT_SLOTS={complement:2,recessiveEpi:3,dominantEpi:3,inhibitor:2,duplicate:2,additive:3};
   if(hyp.inter==='none'){
     S.inter={enabled:false,type:'complement',locusA:'',locusB:'',traits:['表型一','表型二','表型三','表型四'],addLoci:[],pathway:{steps:[],final:''},custom:{},customLoci:[]};
@@ -1160,33 +1539,109 @@ function applyRevHypothesis(hyp){
    P 表型约束按【整体表型】判定（互作下单基因表型与整体表型可能不同，如互补互作中 AAbb 表现为隐性性状） */
 function revParentCandidates(hyp){
   const rv=S.rev,genes=hyp.genes,pure=!!rv.pure;
+  /* 参与枚举的基因数：
+     · 非互作题（inter='none'）→ 只用用户填写的基因；
+     · 互作题（互补/上位/抑制…）→ 额外基因会把"未写出的互补基因"补上，
+       否则 AABB×aabb 这种需要 cc 掩蔽的 9:3:4 / 12:3:1 永远枚举不出来。 */
+  const useExtra=(hyp.inter&&hyp.inter!=='none'&&hyp.inter!=='pw');
+  const nAll=useExtra?revGeneCount():genes.length;
+  if(hyp.inh){while(hyp.inh.length<nAll)hyp.inh.push('auto');hyp.inh.length=nAll;}
+  if(hyp.let){while(hyp.let.length<nAll)hyp.let.push('none');hyp.let.length=nAll;}
+  const info=[];
+  for(let i=0;i<nAll;i++)info.push(revGeneInfo(i));
+  const letters=info.map(x=>x.dletter);
   let combos=[{p1:{},p2:{}}];
-  for(let i=0;i<genes.length;i++){
-    const g=genes[i],D=g.letter,d=g.letter.toLowerCase(),inh=hyp.inh[i];
-    let fOpts,mOpts;
-    if(inh==='auto'){
-      fOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,d]];
-      mOpts=fOpts.slice();
-    }else if(inh==='X'){
-      fOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,d]];
-      mOpts=[[D],[d]]; /* 半合子天然纯合 */
-    }else if(inh==='Y'){
-      fOpts=[[]]; /* 雌性无 Y */
-      mOpts=[[D],[d]];
-    }else{ /* X、Y 同源区段：雄性 [X等位,Y等位] 顺序有意义，四种相位 */
-      fOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,d]];
-      mOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,D],[d,d]];
+  /* 按"染色体对"分组：同一对上的基因连锁，必须作为一个整体枚举（相引/相斥两种相位） */
+  const byPair=new Map();
+  const chrom=rv.chrom||[];
+  info.forEach((g,i)=>{
+    const c=chrom[i]||{pair:i,col:0};
+    if(!byPair.has(c.pair))byPair.set(c.pair,[]);
+    byPair.get(c.pair).push(i);
+  });
+  const groups=[...byPair.entries()].sort((a,b)=>a[0]-b[0]).map(e=>e[1]);
+  for(const idxs of groups){
+    const allAuto=idxs.every(i=>hyp.inh[i]==='auto');
+    if(allAuto){
+      /* 该染色体对上所有基因都位于常染色体：按"整条染色体"枚举亲本相位
+         （只有一个基因时即 (显,显)/(显,隐)/(隐,隐) 三种基因型；两个及以上即相引/相斥等相位） */
+      const Ds=idxs.map(i=>info[i].dletter),ds=idxs.map(i=>info[i].dletter.toLowerCase());
+      /* 每个基因座的三种"二位基因型"：显性纯合 / 杂合 / 隐性纯合；
+         两个亲本各自独立取值，因此 AA×aa、Aa×aa、Aa×Aa 等真正的亲本组合都能枚举到。
+         多个基因座位于同一对染色体时按位相乘，自然覆盖相引 AB/ab 与相斥 Ab/aB 两种相位。 */
+      const perLocus=[];
+      idxs.forEach((x,k)=>{
+        const o=[[Ds[k],Ds[k]],[Ds[k],ds[k]],[ds[k],ds[k]]];
+        perLocus.push(pure?[o[0],o[2]]:o);
+      });
+      const parOpts=[];
+      (function genP(depth,cur){
+        if(depth===perLocus.length){parOpts.push(cur.map(g=>g.slice()));return}   /* 每项 = [首条,次条] 等位 */
+        perLocus[depth].forEach(g=>genP(depth+1,cur.concat([g])));
+      })(0,[]);
+      const next=[];
+      {
+        const seenPair={};
+        for(const c of combos)for(const a1 of parOpts)for(const a2 of parOpts){
+          const p1=Object.assign({},c.p1),p2=Object.assign({},c.p2);
+          p1.all=Object.assign({},p1.all);p2.all=Object.assign({},p2.all);
+          idxs.forEach((gi,k)=>{
+            p1.all['n'+gi]=[a1[k][0],a1[k][1]];
+            p2.all['n'+gi]=[a2[k][0],a2[k][1]];
+          });
+          /* 去重键必须包含"每条同源染色体上的等位"（不能只看合并后的等位集合），
+             否则 AB/ab 与 Ab/aB 等不同相位、以及不同基因座组合会互相吞掉 */
+          const key=JSON.stringify([p1.all,p2.all]);
+          if(seenPair[key])continue;
+          seenPair[key]=1;
+          p1.sex=p1.sex||'F';p2.sex='M';p1.cyto=p1.cyto||{};p2.cyto=p2.cyto||{};
+          next.push({p1,p2});
+          if(next.length>20000)return[];
+        }
+      }
+      combos=next;
+      continue;
     }
-    const next=[];
-    for(const c of combos)for(const a of fOpts)for(const b of mOpts){
-      const p1=Object.assign({},c.p1);p1['n'+i]=a;
-      const p2=Object.assign({},c.p2);p2['n'+i]=b;
-      next.push({p1,p2});
+    for(const i of idxs){
+      const g=info[i],D=g.dletter,d=g.dletter.toLowerCase(),inh=hyp.inh[i];
+      let fOpts,mOpts;
+      if(inh==='auto'){
+        fOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,d]];
+        mOpts=fOpts.slice();
+      }else if(inh==='X'){
+        fOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,d]];
+        mOpts=[[D],[d]]; /* 半合子天然纯合 */
+      }else if(inh==='Y'){
+        fOpts=[[]]; /* 雌性无 Y */
+        mOpts=[[D],[d]];
+      }else{ /* X、Y 同源区段：雄性 [X等位,Y等位] 顺序有意义，四种相位 */
+        fOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,d]];
+        mOpts=pure?[[D,D],[d,d]]:[[D,D],[D,d],[d,D],[d,d]];
+      }
+      const seenPair={};
+      const combos_next=[];
+      for(const c of combos)for(const a of fOpts)for(const b of mOpts){
+        const p1=Object.assign({},c.p1),p2=Object.assign({},c.p2);
+        p1.all=Object.assign({},p1.all);p2.all=Object.assign({},p2.all);
+        p1.all['n'+i]=a.slice();p2.all['n'+i]=b.slice();
+        const key=JSON.stringify([p1.all,p2.all]);
+        if(seenPair[key])continue;
+        seenPair[key]=1;
+        p1.sex=p1.sex||'F';p2.sex='M';p1.cyto=p1.cyto||{};p2.cyto=p2.cyto||{};
+        combos_next.push({p1,p2});
+        if(combos_next.length>20000)return[];
+      }
+      combos=combos_next;
     }
-    combos=next;
-    if(combos.length>20000)return[];
   }
   /* 整体表型约束过滤 */
+  /* 每个候选都先补齐等位（纯合补齐）并深拷贝，避免同一个对象被反复引用/被后续计算改写 */
+  combos=combos.map(c=>{
+    const p1={all:{},cyto:{},sex:'F'},p2={all:{},cyto:{},sex:'M'};
+    for(const k in c.p1.all){p1.all[k]=c.p1.all[k].slice();const l1=locusById(k);if(l1)padAlleles(p1,l1)}
+    for(const k in c.p2.all){p2.all[k]=c.p2.all[k].slice();const l2=locusById(k);if(l2)padAlleles(p2,l2)}
+    return {p1,p2};
+  });
   const c1=Object.keys(rv.p1Phen||{}).filter(k=>rv.p1Phen[k]);
   const c2=Object.keys(rv.p2Phen||{}).filter(k=>rv.p2Phen[k]);
   if(c1.length||c2.length){
@@ -1308,6 +1763,7 @@ function runReverse(silent){
   const swapOpts=(genes.length>=2&&rv.tryInter)?[false,true]:[false];
   const SAVED=cloneState();
   const matches=[];let tried=0;const TRIED_CAP=50000;
+  calcCacheReset();clearGenCache();
   /* 图解模式：通路图已给出催化/抑制结构，只需枚举传递方式×致死×显隐翻转×亲本基因型 */
   if(rv.pw&&rv.pw.enabled){
     const pw=rv.pw;
@@ -1326,13 +1782,16 @@ function runReverse(silent){
       const isSex=hyp.inh.some(x=>x!=='auto');
       if(isSex&&rv.firstMode==='self')continue;
       const nextMode=isSex&&rv.nextMode==='self'?'free':rv.nextMode;
+      if(!REV_MODE)REV_MODE=true;
       applyRevHypothesis(hyp);
+      CALC.gamete.clear();CALC.self.clear();CALC.free.clear();
       ZYG_HOOK=z=>pwPhenotype(hyp,z); /* 图解表型 */
       const combos=revParentCandidates(hyp);
       for(const c of combos){
         tried++;
         if(tried>TRIED_CAP)break outerPw;
-        const P1={all:c.p1,cyto:{},sex:'F'},P2={all:c.p2,cyto:{},sex:'M'};
+        /* c.p1 / c.p2 已是完整亲本对象，不能再包一层 {all:...} */
+        const P1=c.p1,P2=c.p2;
         if(g1obs.length){
           const eg=makeGametes(P1,'F'),sp=makeGametes(P2,'M');
           const r=doCross(eg.list,sp.list);
@@ -1380,12 +1839,16 @@ function runReverse(silent){
     const isSex=hyp.inh.some(x=>x!=='auto');
     if(isSex&&rv.firstMode==='self')continue; /* 伴性不支持单亲自交，跳过该假设 */
     const nextMode=isSex&&rv.nextMode==='self'?'free':rv.nextMode; /* 伴性时"自交"按群体内自由交配处理（雌雄异体） */
+    if(!REV_MODE)REV_MODE=true;
     applyRevHypothesis(hyp);
+    CALC.gamete.clear();CALC.self.clear();CALC.free.clear();
     const combos=revParentCandidates(hyp);
     for(const c of combos){
       tried++;
       if(tried>TRIED_CAP)break outer;
-      const P1={all:c.p1,cyto:{},sex:'F'},P2={all:c.p2,cyto:{},sex:'M'};
+      /* 注意：revParentCandidates 返回的 c.p1 / c.p2 已经是完整亲本对象
+         （{all,cyto,sex}），不能再包一层 {all:...}，否则等位会丢，比例全错 */
+      const P1=c.p1,P2=c.p2;
       /* F₁ 快速剪枝 */
       if(g1obs.length){
         const eg=makeGametes(P1,'F'),sp=makeGametes(P2,'M');
@@ -1423,9 +1886,12 @@ function runReverse(silent){
 function withRevHyp(fn){
   if(!(lastResult&&lastResult.hyp)){fn();return}
   const SAVED=cloneState();
+  const revWas=REV_MODE;REV_MODE=true;
   applyRevHypothesis(lastResult.hyp);
+  CALC.gamete.clear();CALC.self.clear();CALC.free.clear();clearGenCache();
+  CALC.gamete.clear();CALC.self.clear();CALC.free.clear();clearGenCache();
   if(lastResult.hyp.inter==='pw')ZYG_HOOK=z=>pwPhenotype(lastResult.hyp,z);
-  try{fn()}finally{ZYG_HOOK=null;S=SAVED;DOM_FLIP=new Set();rebuildLoci()}
+  try{fn()}finally{ZYG_HOOK=null;S=SAVED;DOM_FLIP=new Set();REV_MODE=revWas;rebuildLoci();calcCacheReset();clearGenCache()}
 }
 function hypDesc(m){
   const parts=[];
@@ -1477,7 +1943,8 @@ function appendRevSummary(dp){
     box.append(el('div',{class:'warn'},'未找到能匹配所给比例的解释。可尝试：开启"尝试致死/互作"、"显隐性未知"、放宽亲本表型约束，或核对比例数据。'));
     dp.append(box);return;
   }
-  box.append(el('div',{class:'hint',html:'找到 <b>'+res.matches.length+'</b> 种可行解释（同一比例可能对应多种不可区分的假设与亲本组合）。伴性与常染色体若比例相同会并列列出。点击「查看」展示该方案的完整遗传图解。'}));
+  box.append(el('div',{class:'hint',html:'找到 <b>'+res.matches.length+'</b> 种可行解释（同一比例可能对应多种不可区分的假设与亲本组合）。伴性与常染色体若比例相同会并列列出。点击「查看」直接展示该方案的完整遗传图解与逐代计算过程。'}));
+  if(res.matches.length>30)box.append(el('div',{class:'hint'},'（下表只列前 30 条，可按第3步的亲本表型约束缩小范围）'));
   const t=el('table',{class:'rtab'});
   t.append(el('tr',null,el('th',null,'方案'),el('th',null,'P ♀ × P ♂'),el('th',null,'遗传方式与显隐性推断'),el('th',null,'')));
   res.matches.slice(0,30).forEach((m,k)=>{
@@ -1486,21 +1953,27 @@ function appendRevSummary(dp){
     let gp1,gp2;
     {
       const SAVED=cloneState();
+      const revClean=REV_MODE;REV_MODE=true;
       applyRevHypothesis(m.hyp);
       gp1=stripHtml(genoHtml(m.p1));gp2=stripHtml(genoHtml(m.p2));
       S=SAVED;DOM_FLIP=new Set();rebuildLoci();
+      if(!revClean){REV_MODE=false}
+      calcCacheReset();
     }
     tr.append(el('td',{html:esc(gp1)+' × '+esc(gp2)}));
     tr.append(el('td',null,hypDesc(m)));
     const td=el('td');
     td.append(el('button',{class:'btn mini',onclick:()=>{
       const SAVED=cloneState();
+      const revClean=REV_MODE;REV_MODE=true;
       applyRevHypothesis(m.hyp);
       if(m.hyp.inter==='pw')ZYG_HOOK=z=>pwPhenotype(m.hyp,z);
       const nm=m.hyp.inh.some(x=>x!=='auto')&&rv.nextMode==='self'?'free':rv.nextMode;
       lastResult={gens:forwardChain(m.p1,m.p2,rv.firstMode,res.N,nm),p1:m.p1,p2:m.p2,mode:rv.firstMode,hyp:m.hyp,pwMode:m.hyp.inter==='pw'};
       ZYG_HOOK=null;
       S=SAVED;DOM_FLIP=new Set();rebuildLoci();
+      if(!revClean){REV_MODE=false}
+      calcCacheReset();clearGenCache();
       renderDiagram();
     }},'查看'));
     tr.append(td);
@@ -1567,6 +2040,19 @@ function renderFwdPanel(rp){
     el('button',{class:'btn',style:'font-size:15px;padding:10px 26px',onclick:()=>{runCalculation();switchTab('results')}},'▶ 开始计算'),
     el('span',{class:'hint'},'计算完成后在下方/结果页查看遗传图解')));
   rp.append(b);
+}
+/* 反推：可用性状候选（优先"表型清单"，其次各基因的显/隐性性状注释）。
+   此前只读 phenList，因此直接给基因填了性状名后，下方"亲本表型"下拉始终是空的、很多题推不了。 */
+function traitOptions(){
+  const rv=S.rev;
+  const list=(rv.phenList||'').split(/[,，、;；\s]+/).map(x=>x.trim()).filter(Boolean);
+  if(list.length)return[...new Set(list)];
+  const out=[];
+  (rv.genes||[]).forEach(g=>{
+    if(g.dom&&!out.includes(g.dom))out.push(g.dom);
+    if(g.rec&&!out.includes(g.rec))out.push(g.rec);
+  });
+  return out;
 }
 /* ---- 图解模式编辑器：思维导图式通路图 ---- */
 let pwLinkFrom=null; /* 连线起点 */
@@ -1756,6 +2242,12 @@ function buildPwEditor(){
 function renderRevPanel(rp){
   const rv=S.rev;
   const b=el('div');
+  /* 性状候选的即时刷新：入口①输入基因的显/隐性性状（250ms 防抖）→ 重建"亲本表型"下拉；
+    入口②改基因字母（300ms 防抖）→ 重建本栏目（染色体位置表/连锁表同步更新）。
+    这样"输入性状后下方可选性状不更新"的问题被彻底修掉。 */
+  let phenTimer=null,panelTimer=null;
+  const computing=()=>{clearTimeout(phenTimer);phenTimer=setTimeout(()=>refreshRevPhenSelects(),250)};
+  const letterChanged=()=>{clearTimeout(panelTimer);panelTimer=setTimeout(()=>refreshPanel('反推'),300)};
   b.append(el('div',{class:'hint',html:'<b>反推</b>：只需给出基因字母与性状注释、各代交配方式及观测表型比，计算器自动枚举<b>传递方式（常染色体 / 伴X / 伴Y / X,Y同源区段）、致死、基因互作、显隐性关系与亲本基因型</b>的全部组合，找出与观测一致的解释。<br>注：伴性与常染色体若比例相同会并列列出（观测不区分性别时二者不可分辨）；比例匹配时忽略子代性别标记。'}));
   /* 独立基因设置 */
   b.append(el('h4',{class:'sec',style:'margin-top:0'},'第1步：基因设置（独立于左侧题目设置）'));
@@ -1764,18 +2256,48 @@ function renderRevPanel(rp){
     const row=el('div',{class:'row'});
     row.append(el('span',{class:'badge'},'基因'+(k+1)));
     row.append(el('span',{class:'hint'},'字母'));
-    const li=symIn(g.letter,v=>{g.letter=(v||LETTERS[k]||'G').slice(0,1).toUpperCase()});
+    const li=symIn(g.letter,v=>{g.letter=(v||LETTERS[k]||'G').slice(0,1).toUpperCase();letterChanged()});
     li.style.width='44px';row.append(li);
-    row.append(el('span',{class:'hint'},'显性性状(选填)'));
-    const di=txtIn(g.dom,v=>g.dom=v);di.style.width='86px';di.placeholder='（选填）';row.append(di);
-    row.append(el('span',{class:'hint'},'隐性性状(选填)'));
-    const ri=txtIn(g.rec,v=>g.rec=v);ri.style.width='86px';ri.placeholder='（选填）';row.append(ri);
-    row.append(el('button',{class:'btn mini danger',onclick:()=>{if(rv.genes.length>1){rv.genes.splice(k,1);rv.p1Phen={};rv.p2Phen={};renderRun()}}},'删'));
+    row.append(el('span',{class:'hint'},'显性性状'));
+    const di=txtIn(g.dom,v=>{g.dom=v;computing()});di.style.width='92px';di.placeholder='可留空';row.append(di);
+    row.append(el('span',{class:'hint'},'隐性性状'));
+    const ri=txtIn(g.rec,v=>{g.rec=v;computing()});ri.style.width='92px';ri.placeholder='可留空';row.append(ri);
+    row.append(el('button',{class:'btn mini danger',onclick:()=>{if(rv.genes.length>1){rv.genes.splice(k,1);rv.p1Phen={};rv.p2Phen={};refreshPanel('反推')}}},'删'));
     b.append(row);
   });
-  b.append(el('button',{class:'addbtn',onclick:()=>{if(rv.genes.length<3){rv.genes.push({letter:LETTERS[rv.genes.length]||'C',dom:'',rec:''});renderRun()}else toast('反推最多 3 个基因')}},'+ 添加基因（最多 3 个）'));
-  b.append(flRow('表型清单（推荐填写）',(()=>{const i=txtIn(rv.phenList,v=>rv.phenList=v);i.placeholder='如：紫, 绿, 白（顿号/逗号分隔）';return i})()));
-  b.append(el('div',{class:'hint',html:'题目给出的全部<b>表型名称</b>。填写后：观测可按"表型名:比例"填写（如 <b>紫:12,绿:3,白:1</b>），引擎会枚举各表型在互作结构中的分配——表型与比例严格对应，避免错位匹配。'}));
+  b.append(el('button',{class:'addbtn',onclick:()=>{const n=(rv.genes||[]).length+(rv.nGen||0);if(n<6){rv.genes.push({letter:LETTERS[rv.genes.length]||'C',dom:'',rec:''});rebuildLoci();refreshPanel('反推')}else toast('反推最多支持 6 个基因（含额外基因）')}},'+ 添加基因（最多 6 个）'));
+  b.append(el('div',{class:'hint',html:'<b>可选基因对数</b>：只用于<b>反推</b>的隐性上位类题型。若题目只写了 2 个基因但给出 <b>9:3:4</b>（隐性上位），说明还有一个<b>未被写出的互补基因</b>——把这里设为 1，计算器会自动附加一个纯合隐性基因 cc 参与计算。'}));
+  b.append(flRow('可选基因对数（额外基因）',numIn(rv.nGen==null?1:rv.nGen,0,2,v=>{rv.nGen=v;rebuildLoci();refreshPanel('反推')})));
+  /* 基因在染色体上的位置：决定"连锁"还是"自由组合" */
+  const ng=(rv.genes||[]).length+(rv.nGen||0);
+  const chrom=rv.chrom||(rv.chrom=[]);
+  for(let i=0;i<ng;i++)if(!chrom[i])chrom[i]={pair:i,col:0};
+  chrom.length=ng;
+  b.append(el('h4',{class:'sec'},'基因在染色体上的位置（决定是否连锁）'));
+  const cg=el('div',{class:'row'});
+  (rv.genes||[]).forEach((g,i)=>{
+    cg.append(el('span',{class:'badge'},g.letter||('G'+(i+1))));
+    cg.append(selIn(String((chrom[i]||{pair:i}).pair),Array.from({length:Math.max(1,ng)},(_,p)=>[String(p),'第'+(p+1)+'对染色体']),v=>{chrom[i].pair=+v;refreshPanel('反推')}));
+    cg.append(el('span',{class:'hint'},'　'));
+  });
+  for(let i=(rv.genes||[]).length;i<ng;i++)cg.append(el('span',{class:'badge'},'额外基因'+(i-(rv.genes||[]).length+1)+'（默认纯合隐性）'));
+  b.append(cg);
+  b.append(el('div',{class:'hint',html:'<b>同一对</b>染色体上的基因＝<b>连锁</b>，可填交换值；放在<b>不同对</b>上＝自由组合（独立分配）。默认每个基因各占一对染色体（即默认自由组合）。'}));
+  const pairsUsed=[...new Set(chrom.filter(Boolean).map(c=>c.pair))].sort((a,b)=>a-b);
+  pairsUsed.forEach(p=>{
+    const group=[];chrom.forEach((c,i)=>{if(c&&c.pair===p&&i<(rv.genes||[]).length)group.push(rv.genes[i])});
+    if(group.length<2)return;
+    const row=el('div',{class:'row'});
+    row.append(el('span',{class:'badge'},'第'+(p+1)+'对'));
+    row.append(el('span',{class:'hint'},group.map(g=>g.letter).join(' — ')+' 交换值'));
+    const inp=el('input',{type:'text',value:(rv.rec==null?20:rv.rec),style:'width:70px',placeholder:'如20或1/7'});
+    inp.oninput=()=>{rv.rec=inp.value};
+    row.append(inp);
+    row.append(el('span',{class:'hint'},'%（重组型配子占该对基因全部配子的百分率；50%＝自由组合）'));
+    b.append(row);
+  });
+  b.append(flRow('表型清单（推荐填写）',(()=>{const i=txtIn(rv.phenList,v=>{rv.phenList=v;computing()});i.placeholder='如：紫, 绿, 白（顿号/逗号分隔）';return i})()));
+  b.append(el('div',{class:'hint',html:'题目给出的全部<b>表型名称</b>。填写后：观测可按"表型名:比例"填写（如 <b>紫:12,绿:3,白:1</b>），引擎会枚举各表型在互作结构中的分配——表型与比例严格对应，避免错位匹配。若题目没有给表型名，可只填基因的显/隐性性状，同样能在下方选择亲本表型。'}));
   /* 图解模式（通路图编辑器） */
   b.append(el('div',{class:'mt'},chkIn(rv.pw.enabled,v=>{rv.pw.enabled=v;renderRun()},'图解模式：直接按题目中的<b>代谢/通路图</b>搭建（不需填基因显隐性名称）')));
   if(rv.pw.enabled){
@@ -1792,13 +2314,13 @@ function renderRevPanel(rp){
   b.append(chkIn(rv.domUnknown,v=>rv.domUnknown=v,'显隐性未知：尝试各基因等位显隐性互换（推断哪个等位是显性）'));
   /* 亲本表型约束 */
   b.append(el('h4',{class:'sec'},'第3步：亲本 P 的表型（约束，可不选）'));
-  const phenOpts=(rv.phenList||'').split(/[,，、;；\s]+/).map(x=>x.trim()).filter(Boolean);
+  const phenOpts=traitOptions();
   if(phenOpts.length){
     const row=el('div',{class:'row'});
     row.append(el('span',{class:'hint'},'P♀整体表型'));
-    row.append(selIn(rv.p1Phen.whole||'',[['','（未指定）']].concat([...new Set(phenOpts)].map(n=>[n,n])),v=>{rv.p1Phen={whole:v}}));
+    row.append(selIn(rv.p1Phen.whole||'',[['','（未指定）']].concat([...new Set(phenOpts)].map(n=>[n,n])),v=>{rv.p1Phen={whole:v}}).classList.add('revPhenSel'));
     row.append(el('span',{class:'hint'},'P♂整体表型'));
-    row.append(selIn(rv.p2Phen.whole||'',[['','（未指定）']].concat([...new Set(phenOpts)].map(n=>[n,n])),v=>{rv.p2Phen={whole:v}}));
+    row.append(selIn(rv.p2Phen.whole||'',[['','（未指定）']].concat([...new Set(phenOpts)].map(n=>[n,n])),v=>{rv.p2Phen={whole:v}}).classList.add('revPhenSel'));
     b.append(row);
     b.append(el('div',{class:'hint'},'按整体表型约束（互作结构下自动考虑）。'));
   }else{
@@ -1895,15 +2417,27 @@ function buildUnits(){
         if(placedByCol[x.locus][x.col]==null)placedByCol[x.locus][x.col]=x.sym;
       });
       loci.forEach(id=>placedIds.add(id));
-      const rec=[];
+      /* 复等位基因座：某个"符号"在图上被放到哪个染色体列，决定了相引/相斥。
+         仅在反推模式且存在额外基因时才登记（键：基因座id|符号:列），避免污染普通复等位座。 */
+
+      const rec=[],recWarn=[];
       for(let k=0;k<loci.length-1;k++){
-        const v=(ch.rec[p]&&ch.rec[p][k]!=null&&ch.rec[p][k]!=='')?ch.rec[p][k]:50;
-        rec.push(pctIn(v));
+        const raw=(ch.rec[p]&&ch.rec[p][k]!=null&&ch.rec[p][k]!=='')?ch.rec[p][k]:50;
+        let v=pctIn(raw);
+        /* 知识校正：交换值 = 重组型配子占该对基因全部配子的百分率，理论上限 50%。
+           50% 即自由组合；超过 50% 在遗传学上没有意义（连锁越远越接近 50%，但不会超过），
+           故按 50% 处理并给出提示。 */
+        if(rNum(v)<0)v=R(0);
+        if(rNum(v)*100>50){
+          v=R(1,2);
+          recWarn.push(chromLocusName(locusById(loci[k]))+'—'+chromLocusName(locusById(loci[k+1]))+' 的交换值填了 '+raw+'%，超过理论上限 50%，已按 50%（自由组合）计算');
+        }
+        rec.push(v);
       }
-      units.push({kind:'auto',group:g,pair:p,loci,rec,placedByCol,ploidy:ch.ploidy[p]||2,triMode:ch.triMode||'indep',nullG:ch.nullG||'dead'});
+      units.push({kind:'auto',group:g,pair:p,loci,rec,recWarn,placedByCol,ploidy:ch.ploidy[p]||2,triMode:ch.triMode||'indep',nullG:ch.nullG||'dead'});
     }
     ls.forEach(l=>{
-      if(!placedIds.has(l.id))units.push({kind:'auto',group:g,pair:-1,loci:[l.id],rec:[],ploidy:2,triMode:'indep',nullG:'dead'});
+      if(!placedIds.has(l.id))units.push({kind:'auto',group:g,pair:-1,loci:[l.id],rec:[],recWarn:[],ploidy:2,triMode:'indep',nullG:'dead'});
     });
   });
   if(S.sexSystem!=='none'){
@@ -1916,7 +2450,18 @@ function buildUnits(){
 /* 相位解析：按图中各同源染色体上放置的等位基因重排亲本等位顺序（构成相引/相斥） */
 function phasedAlleleArr(u,locusId,parent){
   const arr=((parent.all[locusId]||[]).filter(x=>x!=null));
-  const byCol=u.placedByCol&&u.placedByCol[locusId];
+  let byCol=u.placedByCol&&u.placedByCol[locusId];
+  if(false){
+    /* 复等位座：键为 "符号1|符号2:列" */
+    const conv={};
+    Object.keys(u.placedByCol).forEach(k=>{
+      const m=/^(.*):(\d+)$/.exec(k);
+      if(!m)return;
+      const syms=m[1].split('|');
+      if(syms.includes(locusId))conv[m[2]]=locusId;
+    });
+    if(Object.keys(conv).length)byCol=conv;
+  }
   if(!byCol||!arr.length)return arr;
   const n=Math.max(arr.length,Object.keys(byCol).reduce((a,c)=>Math.max(a,+c+1),0));
   const out=new Array(Math.max(arr.length,1)).fill(null);
@@ -2014,8 +2559,57 @@ function sexGametes(u,parent,role){
   return[s1,s2];
 }
 /* 生成某亲本某性别角色的全部配子 */
+/* 反推专用：可选基因对数 nGen 会在用户给出的基因之后追加若干"题目未写出的互补基因"。
+   它们与普通基因完全一样（常染色体、各自独立分配、可以用染色体位置设连锁），
+   这样"aa 掩盖 B 表现 9:3:4 / A_ 掩盖 B 表现 12:3:1"这类题才能被正确枚举。 */
+function revAlleleSyms(l){
+  /* 反推里 simple 基因座的等位由基因字母决定（含自动追加的"未写出的基因"，如 C/c） */
+  if(l&&l.group==='simple'){
+    const letter=l.def&&l.def.letter?l.def.letter:((S.rev&&S.rev.genes&&S.rev.genes[0]&&S.rev.genes[0].letter)||'A');
+    return [letter,letter.toLowerCase()];
+  }
+  const g0=(S.rev&&S.rev.genes&&S.rev.genes[0]&&S.rev.genes[0].letter)||'A';
+  return [g0,g0.toLowerCase()];
+}
+/* 反推：第 k 个基因所用的字母。
+   k < 用户填写的基因数 → 直接用用户字母；否则是自动追加的"未写出的基因"（跳过已用字母顺延）。 */
+function revGeneLetter(k){
+  const gs=(S.rev&&S.rev.genes)||[];
+  if(k<gs.length)return (gs[k].letter||LETTERS[k]||'G');
+  const used=new Set(gs.map(g=>g.letter));
+  let n=0;
+  for(let i=0;i<26;i++){
+    const c=LETTERS[i];
+    if(used.has(c))continue;
+    if(n===k-gs.length)return c;
+    n++;
+  }
+  return 'X'+k;
+}
+function revGeneInfo(k){
+  const gs=(S.rev&&S.rev.genes)||[];
+  if(k<gs.length){
+    const L=gs[k].letter||LETTERS[k]||'G';
+    return{dletter:L,dom:gs[k].dom||(L+'_ 显性'),rec:gs[k].rec||(L.toLowerCase()+L.toLowerCase()+' 隐性'),extra:false};
+  }
+  const L=revGeneLetter(k);
+  return{dletter:L,dom:L+'_ 显性',rec:L.toLowerCase()+L.toLowerCase()+' 隐性',extra:true};
+}/* 反推：全部参与计算的基因（用户填写的 + 额外追加的） */
+function revNGen(){return Math.max(0,Math.min(6,(S.rev&&S.rev.nGen)|0))}
+function revGeneCount(){
+  /* 只有显式设置了"额外基因"才追加；否则严格用用户填写的基因数 */
+  return ((S.rev&&S.rev.genes)||[]).length+revNGen();
+}
+let REV_MODE=false;
 function makeGametes(parent,role){
+  const ck=zKey(parent)+'#'+role;
+  const hit=CALC.gamete.get(ck);
+  /* 必须返回全新对象：调用方会给每个配子写 pn/surv，若直接返回缓存对象会污染缓存 */
+  if(hit){CALC.stat.hit++;return{list:hit.list.map(e=>({g:e.g,p:e.p,pn:e.pn,surv:e.surv})),notes:hit.notes.slice()}}
+  CALC.stat.miss++;
   const notes=[];
+  /* 先把各基因座的等位数补齐（见 padAlleles：避免"显性纯合只写一个字母"被当成缺体） */
+  LOC.forEach(l=>padAlleles(parent,l));
   const units=buildUnits();
   let list=[{hap:{},sexType:null,sexAll:null,cyto:(role==='F'&&parent.cyto)?parent.cyto:null,mom:(role==='F')?parent:null,p:R(1)}];
   units.forEach(u=>{
@@ -2088,7 +2682,9 @@ function makeGametes(parent,role){
       }else arr.forEach(e=>e.pn=rZero);
     }else arr.forEach(e=>e.pn=e.p);
   }else arr.forEach(e=>e.pn=e.p);
-  return{list:arr,notes};
+  const res={list:arr,notes};
+  if(CALC.gamete.size<4000)CALC.gamete.set(ck,{list:res.list.map(e=>({g:e.g,p:e.p,pn:e.pn,surv:e.surv})),notes:notes.slice()});
+  return{list:res.list.map(e=>({g:e.g,p:e.p,pn:e.pn,surv:e.surv})),notes};
 }
 function combineZygote(eg,sp){
   const z={all:{},sex:null,cyto:eg.cyto?Object.assign({},eg.cyto):{},mother:eg.mom||null};
@@ -2125,7 +2721,9 @@ function doCross(eggs,sperm){
   if(eggs.length*sperm.length>300000)notes.push('⚠ 配子组合数较大，计算可能稍慢。');
   const map=new Map();
   eggs.forEach(e=>sperm.forEach(s=>{
-    const p=rMul(e.pn,s.pn);
+    /* 不要改写传入的配子对象（它们可能来自缓存），概率存在局部变量里 */
+    const pe=(e.pn!=null?e.pn:e.p),ps=(s.pn!=null?s.pn:s.p);
+    const p=rMul(pe,ps);
     if(rIs0(p))return;
     const z=combineZygote(e.g,s.g);
     const k=zKey(z);
@@ -2308,9 +2906,9 @@ function zygPhenotype(z){
       let n=0;
       it.addLoci.forEach(id=>{const l=locusById(id);(z.all[id]||[]).forEach(x=>{if(x===alleleSyms(l)[0])n++});involved.add(id)});
       if(it.pgVal){
-        const base=it.pgBase==null?150:it.pgBase,inc=it.pgInc==null?5:it.pgInc;
+        const base=numVal(it.pgBase,150),inc=numVal(it.pgInc,5);
         const val=Math.round((base+n*inc)*1000)/1000;
-        interText=(it.pgName||'表型')+' '+val+(it.pgUnit||'')+'（'+n+' 个显性，第 '+n+' 级）';
+        interText=(it.pgName||'表型')+' '+val+(it.pgUnit||'')+'（含 '+n+' 个显性基因，第 '+n+' 级）';
       }else interText='含 '+n+' 个显性等位基因（第 '+n+' 级）';
     }else if(it.type==='pathway'){
       const pw=it.pathway;let blockedAt=-1;
@@ -2348,8 +2946,12 @@ function zygPhenotype(z){
     let alleles=z.all[l.id]||[];
     if(l.def&&l.def.maternal&&z.mother&&z.mother.all&&z.mother.all[l.id]&&z.mother.all[l.id].length)
       alleles=z.mother.all[l.id];
+    /* 反推自动追加的"未写出的互补基因"（reverseExtra）：它的作用就是制造上位/掩蔽。
+       若它已被计入互作槽位（involved），它的等位就不再单独写进表型描述，否则
+       9:3:4 会被拆成 6 个表型（"紫、C_ 显性"…），无法与题面的"紫/红/白"匹配。 */
+    if(l.group==='simple'&&l.def&&l.def.reverseExtra)return;
     const ph=locusPhen(l,alleles,z);
-    if(ph!=null)bits.push(ph);
+    if(ph!=null&&ph!=='')bits.push(ph);
   });
   if(interText)bits.unshift(interText);
   let txt=bits.join('、');
@@ -2402,6 +3004,10 @@ function selfPop(pop){
      生殖细胞中失活的 X 重新激活——巴氏小体不影响配子（失活发生在合子形成之后，每代重置），
      子代不会因此出现 O/缺失基因型 */
   if(S.sexSystem!=='none')return freePop(pop);
+  const sig='S|'+popSig(pop);
+  const hit=CALC.self.get(sig);
+  if(hit){CALC.stat.hit++;return hit}
+  CALC.stat.miss++;
   const map=new Map();
   pop.forEach(({z,p})=>{
     const eg=makeGametes(z,'F'),sp=makeGametes(z,'M');
@@ -2415,9 +3021,14 @@ function selfPop(pop){
   });
   let tot=rZero;map.forEach(e=>tot=rAdd(tot,e.p));
   const out=[];map.forEach(e=>{e.pn=rDiv(e.p,tot);out.push(e)});
+  if(CALC.self.size<200)CALC.self.set(sig,out);
   return out;
 }
 function freePop(pop){
+  const sig='F|'+popSig(pop);
+  const hit=CALC.free.get(sig);
+  if(hit){CALC.stat.hit++;return hit}
+  CALC.stat.miss++;
   let eggs,sperm;
   if(S.sexSystem==='none'){
     eggs=popGametePool(pop,'F');sperm=popGametePool(pop,'M');
@@ -2426,10 +3037,15 @@ function freePop(pop){
     sperm=popGametePool(pop.filter(x=>x.z.sex==='M'),'M');
     if(!eggs.length||!sperm.length)return[];
   }
-  return doCross(eggs,sperm).zygs;
+  const out=doCross(eggs,sperm).zygs;
+  if(CALC.free.size<200)CALC.free.set(sig,out);
+  return out;
 }
 function runCalculation(){
   rebuildLoci();
+  normalizeChrom('simple');normalizeChrom('multi');
+  calcCacheReset();
+  clearGenCache();
   const M=S.mating;
   if(!LOC.length){lastResult=null;renderDiagram();return}
   if(M.mode==='self'&&S.sexSystem!=='none'){toast('涉及性染色体遗传时请使用"杂交"模式');return}
@@ -2458,11 +3074,11 @@ function genoSummary(pop){
   });
   return[...m.values()].sort((a,b)=>zKey(a.z)<zKey(b.z)?-1:zKey(a.z)>zKey(b.z)?1:0);
 }
-function ratioOf(sum){return ratioStr(sum.map(e=>e.p))}
 function stripHtml(s){const d=document.createElement('div');d.innerHTML=s;return d.textContent}
 function appendGenBoxes(row,g){
   const gs=genoSummary(g.pop);
-  if(gs.length<=16){
+  const CAP=32;
+  if(gs.length<=CAP){
     gs.forEach(v=>{
       row.append(el('div',{class:'geno-box'},
         el('div',{class:'g',html:genoHtml(v.z)}),
@@ -2471,13 +3087,15 @@ function appendGenBoxes(row,g){
     });
   }else{
     const ps=phenoSummary(g.pop);
-    ps.slice(0,10).forEach(v=>{
+    ps.slice(0,12).forEach(v=>{
       row.append(el('div',{class:'geno-box'},
         el('div',{class:'g',style:'font-size:12px'},'表型类'),
         el('div',{class:'p'},v.t),
         el('div',{class:'r'},rStr(v.p))));
     });
-    row.append(el('div',{class:'geno-box'},el('div',{class:'p'},'共 '+gs.length+' 种基因型 / '+ps.length+' 种表型（点击左侧世代标签查看详情）')));
+    row.append(el('div',{class:'geno-box'},
+      el('div',{class:'p'},'共 '+gs.length+' 种基因型 / '+ps.length+' 种表型'),
+      el('button',{class:'btn mini ghost',onclick:()=>showGenDetail(g.name)},'查看全部')));
   }
   if(g.raw){
     const dead=g.raw.filter(v=>v.dead&&rIs0(v.p));
@@ -2550,14 +3168,25 @@ function renderDiagramInner(){
   const last=lastResult.gens[lastResult.gens.length-1];
   const tb=el('table',{class:'rtab'});
   tb.append(el('tr',null,el('th',null,last.name+' 基因型'),el('th',null,'概率'),el('th',null,'表型')));
-  genoSummary(last.pop).slice(0,25).forEach(v=>{
+  const lastGs=genData(last).gs;
+  lastGs.slice(0,40).forEach(v=>{
     tb.append(el('tr',null,
       el('td',{html:genoHtml(v.z)}),
-      el('td',null,rStr(v.pn)),
+      el('td',null,rStr(v.p)+'（'+pctOf(v.p)+'）'),
       el('td',null,zygPhenotype(v.z))));
   });
-  dp.append(el('h4',{class:'sec'},last.name+' 明细'));
+  if(lastGs.length>40)tb.append(el('tr',null,el('td',{html:'…',colspan:'3'},'共 '+lastGs.length+' 种基因型，点左侧「'+last.name+'」标签查看完整明细')));
+  dp.append(el('h4',{class:'sec'},last.name+' 明细（共 '+lastGs.length+' 种基因型）'));
   dp.append(tb);
+  const lastPs=genData(last).ps;
+  if(lastPs.length){
+    const pt=el('table',{class:'rtab'});
+    pt.append(el('tr',null,el('th',null,'表型'),el('th',null,'概率'),el('th',null,'百分数')));
+    lastPs.forEach(v=>pt.append(el('tr',null,el('td',null,v.t),el('td',null,rStr(v.p)),el('td',null,pctOf(v.p)))));
+    pt.append(el('tr',null,el('td',null,'合计比例'),el('td',{html:'<b>'+ratioOf(lastPs)+'</b>',colspan:'2'})));
+    dp.append(el('h4',{class:'sec'},last.name+' 表型比例'));
+    dp.append(pt);
+  }
   if(S.inter.enabled&&S.inter.type==='polygenic'&&S.inter.addLoci&&S.inter.addLoci.length){
     dp.append(el('h4',{class:'sec'},last.name+' 连续表型频率分布（多基因累加）'));
     dp.append(drawPolyChart(last.pop));
@@ -2565,37 +3194,143 @@ function renderDiagramInner(){
   dp.append(el('div',{class:'hint'},'提示：点击左侧 P / F1 / F2 … 标签可查看该代的详细计算过程与染色体图解。'));
   if(S.calcMode==='rev')appendRevSummary(dp);
 }
+/* 多代结果缓存：同一次计算里图解/详情会多次取同一代数据 */
+let GEN_CACHE=new Map();
+function genData(g){
+  if(!g)return null;
+  const k=g.name+'#'+(g.pop?g.pop.length:0);
+  const hit=GEN_CACHE.get(k);
+  if(hit&&hit.g===g)return hit;
+  const o={g,gs:genoSummary(g.pop||[]),ps:phenoSummary(g.pop||[]),dead:((g.raw||[]).filter(v=>v.dead))};
+  GEN_CACHE.set(k,o);
+  return o;
+}
+function clearGenCache(){GEN_CACHE=new Map()}
+function pctOf(x){
+  const v=(typeof x==='object'&&x!==null)?(x.pn!=null?x.pn:x.p):x;
+  if(v===undefined||v===null)return'—';
+  return rPct(v);
+}
+/* 配子形成过程分析（连锁/自由组合/多拷贝），仿试题标准答案的分步写法 */
+function gameteAnalysis(g,who,parent){
+  const out=[];
+  if(!parent)return out;
+  let units=[];
+  try{units=buildUnits()}catch(e){return out}
+  units.forEach((u,i)=>{
+    if(u.kind==='sex'){
+      const ids=[...new Set(u.xl.concat(u.yl))];
+      if(!ids.length)return;
+      const nm=ids.map(id=>chromLocusName(locusById(id))).join('、');
+      out.push('        · 性染色体上的基因（'+nm+'）：'+((S.sexSystem==='XY')?'♂产生 X、Y 两种配子（各 1/2，伴 X 基因呈半合子）':'♀产生 Z、W 两种配子（各 1/2，伴 Z 基因呈半合子）'));
+      return;
+    }
+    const ids=u.loci||[];
+    if(!ids.length)return;
+    (u.recWarn||[]).forEach(w=>{if(notes.indexOf(w)<0)notes.push('⚠ '+w)});
+    const names=ids.map(id=>chromLocusName(locusById(id)));
+    const label=u.pair>=0?('第'+(u.pair+1)+'对染色体'):'独立分配的染色体';
+    if(ids.length===1){
+      const l=locusById(ids[0]);
+      const a=(parent.all&&parent.all[ids[0]])?parent.all[ids[0]].filter(x=>x!=null):[];
+      const uniq=[...new Set(a)];
+      out.push('        · '+label+'（'+names[0]+' 基因座）：亲本基因型 '+uniq.join('/')+' → 产生 '+
+        uniq.map(s=>s).join('、')+' 两种配子，各占 1/2');
+      return;
+    }
+    const recs=(u.rec||[]).map(x=>rPct(x)).join('%、');
+    const at50=(u.rec||[]).every(x=>Math.abs(rNum(x)-50)<1e-9);
+    out.push('        · '+label+'（'+names.join('、')+' 连锁）：'+(at50?
+      '交换值 '+recs+'（≥50%，等同自由组合）→ 按自由组合处理，共 2^'+ids.length+' 种配子':
+      '交换值 '+recs+' → 亲本型配子各 (1−r)/2，重组型配子各 r/2'));
+  });
+  if(units.some(u=>u.ploidy>2)){
+    out.push('        · 存在多拷贝染色体（三体等）：按"'+((S.chrom.simple&&S.chrom.simple.triMode)==='to21'?'n:1 交替式':'独立分配')+'"产生 n+1 与 n 两类配子'+(String(S.chrom.simple&&S.chrom.simple.nullG)==='dead'?'，进入 0 条的配子视为致死':'，进入 0 条的配子记为 O'));
+  }
+  if(!out.length)out.push('        · 各基因独立分配（自由组合）');
+  return out;
+}
 function buildStepsText(g){
   const L=[];
-  L.push('═══ '+g.name+' 计算过程 ═══');
+  const D=genData(g);
+  const gs=D?D.gs:[],ps=D?D.ps:[];
+  L.push('═══ '+g.name+' 计算过程（分行详解） ═══');
+  L.push('代数：'+(g.name==='F1'?'P → F1（'+(lastResult.mode==='self'?'亲本自交':lastResult.mode==='free'?'两种亲本自由交配':'杂交')+'）':(lastResult.mode==='free'?'上一代群体随机交配 → ':'上一代各基因型自交 → ')+g.name));
+  L.push('');
   (g.notes||[]).forEach(n=>L.push('· '+n));
   if(g.eggs&&g.sperm){
     L.push('');
-    L.push('【第1步】雌配子（由'+(lastResult.mode==='self'?'自交亲本':'母本 P♀')+'产生）：');
-    g.eggs.forEach(e=>L.push('    '+gameteHtml(e.g)+'   概率 = '+rStr(e.pn)));
-    L.push('【第2步】雄配子（由'+(lastResult.mode==='self'?'自交亲本':'父本 P♂')+'产生）：');
-    g.sperm.forEach(e=>L.push('    '+gameteHtml(e.g)+'   概率 = '+rStr(e.pn)));
+    L.push('【第 1 步】雌配子的形成（'+(lastResult.mode==='self'?'自交亲本':'母本 P♀')+'）');
+    gameteAnalysis(g,'F',lastResult.mode==='self'?lastResult.p1:lastResult.p1).forEach(x=>L.push(x));
+    L.push('      减数分裂的结果：');
+    g.eggs.forEach(e=>L.push('        ♀ '+gameteHtml(e.g)+'　概率 = '+rStr(e.pn)+' = '+pctOf(e.pn)));
+    const se=rAdd(g.eggs.reduce((a,e)=>rAdd(a,e.pn),rZero),rZero);
+    L.push('      校验：全部配子概率之和 = '+rStr(se)+'（应为 1）');
     L.push('');
-    L.push('【第3步】受精：棋盘格法，每个子代 = 某♀配子 × 某♂配子，');
-    L.push('    概率 = ♀配子概率 × ♂配子概率；相同基因型合并相加。');
-  }
-  const gs=genoSummary(g.pop);
-  L.push('');
-  L.push('【'+g.name+' 基因型】共 '+gs.length+' 种：');
-  gs.slice(0,20).forEach(v=>L.push('    '+stripHtml(genoHtml(v.z))+'   '+rStr(v.pn)+'   → '+zygPhenotype(v.z)));
-  if(gs.length>20)L.push('    …（共 '+gs.length+' 种，此处列前 20 种）');
-  const ps=phenoSummary(g.pop);
-  L.push('');
-  L.push('【'+g.name+' 表型比】'+ratioOf(ps));
-  ps.forEach(x=>L.push('    '+x.t+'：'+rStr(x.p)));
-  if(g.raw){
-    const dead=g.raw.filter(v=>v.dead);
-    if(dead.length){
-      L.push('');
-      L.push('【致死基因型】');
-      dead.slice(0,10).forEach(v=>L.push('    '+stripHtml(genoHtml(v.z))+'   致死前概率 '+rStr(v.preP)));
+    L.push('【第 2 步】雄配子的形成（'+(lastResult.mode==='self'?'自交亲本':'父本 P♂')+'）');
+    L.push('      减数分裂的结果：');
+    g.sperm.forEach(e=>L.push('        ♂ '+gameteHtml(e.g)+'　概率 = '+rStr(e.pn)+' = '+pctOf(e.pn)));
+    L.push('');
+    L.push('【第 3 步】受精（棋盘格法 / 逐对配子相乘）');
+    L.push('      每个子代基因型概率 = 该♀配子概率 × 该♂配子概率；相同基因型合并相加。');
+    const grid=el('table',{class:'rtab'});
+    const hd=el('tr');
+    hd.append(el('th',null,'♀配子（概率）'));
+    hd.append(el('th',null,'♂配子（概率）'));
+    hd.append(el('th',null,'相乘得子代基因型'));
+    hd.append(el('th',null,'概率'));
+    grid.append(hd);
+    let shown=0;
+    g.eggs.forEach(e=>g.sperm.forEach(s=>{
+      if(shown>=40)return;
+      shown++;
+      const tr=el('tr');
+      tr.append(el('td',{html:gameteHtml(e.g)+'（'+rStr(e.pn)+'）'}));
+      tr.append(el('td',{html:gameteHtml(s.g)+'（'+rStr(s.pn)+'）'}));
+      const z=combineZygote(e.g,s.g);
+      tr.append(el('td',{html:genoHtml(z)}));
+      tr.append(el('td',null,rStr(rMul(e.pn,s.pn))));
+      grid.append(tr);
+    }));
+    const totalPairs=g.eggs.length*g.sperm.length;
+    if(totalPairs>40)L.push('      （网格共 '+totalPairs+' 格，下表列前 40 格）');
+    L.push(grid);
+    const zb=new Map();
+    g.eggs.forEach(e=>g.sperm.forEach(s=>{
+      const z=combineZygote(e.g,s.g),k=zKey(z),p=rMul(e.pn,s.pn);
+      const ex=zb.get(k);
+      if(ex)ex.p=rAdd(ex.p,p);else zb.set(k,{z,p});
+    }));
+    const zrows=[...zb.values()].filter(x=>!rIs0(x.p)).sort((a,b)=>rNum(b.p)-rNum(a.p));
+    if(zrows.length){
+      L.push('     合并同类项（相同基因型概率相加）：');
+      const t2=el('table',{class:'rtab'});
+      t2.append(el('tr',null,el('th',null,'子代基因型'),el('th',null,'概率（分数）'),el('th',null,'概率（百分数）')));
+      zrows.slice(0,40).forEach(v=>{
+        const tr=el('tr');
+        tr.append(el('td',{html:genoHtml(v.z)}));
+        tr.append(el('td',null,rStr(v.p)));
+        tr.append(el('td',null,pctOf(v.p)));
+        t2.append(tr);
+      });
+      L.push(t2);
     }
   }
+  L.push('');
+  L.push('【第 4 步】'+(g.name||'该代')+' 基因型汇总（共 '+gs.length+' 种）');
+  gs.slice(0,24).forEach(v=>L.push('    '+stripHtml(genoHtml(v.z))+'　'+rStr(v.pn)+'　→　'+zygPhenotype(v.z)));
+  if(gs.length>24)L.push('    …（共 '+gs.length+' 种，此处只列前 24 种；点「查看全部」看完整明细）');
+  if(g.raw&&D.dead.length){
+    L.push('');
+    L.push('【第 5 步】致死基因型（合子致死）');
+    D.dead.slice(0,12).forEach(v=>L.push('    '+stripHtml(genoHtml(v.z))+'　致死前概率 '+rStr(v.preP)+
+      (rIs0(v.p)?'　→ 全部死亡（该格不再进入后代）':'')));
+    L.push('    说明：死亡个体的概率被剔除后，存活个体按比例重新归一化（合计为 1）。');
+  }
+  L.push('');
+  L.push('【第 6 步】'+(g.name||'该代')+' 表型与比例');
+  ps.forEach(x=>L.push('    '+x.t+'：'+rStr(x.p)+'（'+pctOf(x.p)+'）'));
+  L.push('    表型比 = '+ratioOf(ps));
   return L.join('\n');
 }
 function individualChromSvg(z){
@@ -2645,8 +3380,8 @@ function individualChromSvg(z){
       for(let k=0;k<n;k++){
         const y=14+(k+0.7)*H/n;
         svg.append(mk('line',{x1:bx-9,y1:y,x2:bx+9,y2:y,stroke:color,'stroke-width':1.3,opacity:.8}));
-        /* 字母放在竖线左侧，紧贴竖线不重叠 */
-        svg.append(mk('text',{x:bx-4,y:y+3.5,'text-anchor':'end','font-size':10,'font-weight':700,fill:color},info.strands[c][k]||'·'));
+        /* 字母放在竖线左侧，偏移量很小，不与竖线/横线重叠 */
+        svg.append(mk('text',{x:bx-5,y:y+3.5,'text-anchor':'end','font-size':10,'font-weight':700,fill:color},info.strands[c][k]||'·'));
       }
       if(info.names)svg.append(mk('text',{x:bx,y:14+H+13,'text-anchor':'middle','font-size':11,'font-weight':700,fill:color},info.names[c]));
     }
@@ -2689,14 +3424,15 @@ function drawPolyChart(pop){
     if(!rIs0(x.p))svg.append(mk('rect',{x:cx-bw*0.38,y:baseY-h,width:bw*0.76,height:h,rx:3,fill:col,opacity:.85}));
     svg.append(mk('text',{x:cx,y:baseY+15,'text-anchor':'middle','font-size':10.5,fill:'currentColor',opacity:.8},'第'+x.g+'级'));
     if(it.pgVal){
-      const val=Math.round(((it.pgBase==null?150:it.pgBase)+x.g*(it.pgInc==null?5:it.pgInc))*1000)/1000;
+      const val=Math.round((numVal(it.pgBase,150)+x.g*numVal(it.pgInc,5))*1000)/1000;
       svg.append(mk('text',{x:cx,y:baseY+29,'text-anchor':'middle','font-size':10,fill:'currentColor',opacity:.65},val+(it.pgUnit||'')));
     }
     if(!rIs0(x.p))svg.append(mk('text',{x:cx,y:baseY-h-6,'text-anchor':'middle','font-size':10.5,'font-weight':700,fill:'currentColor'},rStr(x.p)));
   });
+  const b0=numVal(it.pgBase,150),inc=numVal(it.pgInc,5);
   const wrap=el('div');
   wrap.append(el('div',{class:'chromwrap'},svg));
-  wrap.append(el('div',{class:'gamete-list',html:'各级比例 <b>'+ratioStr(gs.map(x=>x.p))+'</b>　（共 '+(gs.length)+' 级'+(it.pgVal?('，表型范围 '+((it.pgBase==null?150:it.pgBase))+(it.pgUnit||'')+' ~ '+((it.pgBase==null?150:it.pgBase)+total*(it.pgInc==null?5:it.pgInc))+(it.pgUnit||'')):'')+'）'}));
+  wrap.append(el('div',{class:'gamete-list',html:'各级比例 <b>'+ratioStr(gs.map(x=>x.p))+'</b>　（共 '+gs.length+' 级'+(it.pgVal?('，表型范围 '+b0+(it.pgUnit||'')+' ~ '+(b0+total*inc)+(it.pgUnit||'')):'')+'）'}));
   return wrap;
 }
 function showGenDetail(name){
@@ -2722,8 +3458,9 @@ function showGenDetailInner(name){
   if(!g)return;
   wrap.append(el('h4',{class:'sec'},name+' · 计算过程（每步分行）'));
   wrap.append(el('div',{class:'steps'},buildStepsText(g)));
-  wrap.append(el('h4',{class:'sec'},name+' · 染色体图解（代表个体）'));
-  genoSummary(g.pop).slice(0,4).forEach(v=>{
+  const allGs=genData(g).gs;
+  wrap.append(el('h4',{class:'sec'},name+' · 染色体图解（代表个体'+(allGs.length>8?'，共 '+allGs.length+' 种基因型，此处列前 8 种':'')+'）'));
+  genData(g).gs.slice(0,8).forEach(v=>{
     const card=el('div',{class:'card'});
     card.append(el('div',{class:'chead',html:genoHtml(v.z)+' <span class="hint">'+rStr(v.pn)+'</span>'}));
     card.append(individualChromSvg(v.z));

@@ -1,0 +1,3 @@
+# dev self-test scripts (optional)
+node_modules/
+*.log
