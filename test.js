@@ -15,6 +15,12 @@ const ctx=require('./testdom.js').makeContext(script);
 const ev=code=>vm.runInContext(code,ctx,{filename:'case'});
 
 let pass=0,fail=0;const failures=[];
+/* 原始 HTML/CSS 级断言（不进入页面作用域） */
+function TH(name,fn){
+  let r;
+  try{r=fn()}catch(e){r='断言异常 '+e.message}
+  if(r===true){pass++;console.log('  PASS  '+name)}else{fail++;const d=(typeof r==='string')?r:'false';failures.push(name+' -> '+d);console.log('  FAIL  '+name+' -> '+d)}
+}
 function T(name,code,check){
   let v;
   try{v=ev(code)}catch(e){fail++;const d='异常 '+e.message;failures.push(name+' -> '+d);console.log('  FAIL  '+name+' -> '+d);return}
@@ -154,10 +160,10 @@ T('母系遗传（母性效应）：子代性状由母本基因型决定',
 console.log('\n== G. 反推（由比例推亲本与遗传方式） ==');
 const RV=(setup,min)=>[`__reset();__setSimple(2);__rev(${setup}).matches.length`,v=>v>=(min||1)?true:'只找到 '+v+' 个解'];
 T('反推 3:1（2 基因、纯合亲本、显隐未知）-> 有解',...RV("{genes:['A','B'],obs:[[2,'3:1']],pure:true,domUnknown:true}"));
-T('反推 9:3:4（隐性上位 + 未写出的互补基因）-> 有解',...RV("{genes:['A','B'],phenList:'紫,红,白',obs:[[2,'紫:9,红:3,白:4']],tryInter:true,nGen:1,pure:true}"));
-T('反推 12:3:1（显性上位）-> 有解',...RV("{genes:['A','B'],phenList:'紫,红,白',obs:[[2,'紫:12,红:3,白:1']],tryInter:true,nGen:1}"));
-T('反推 9:7（互补）-> 有解',...RV("{genes:['A','B'],phenList:'紫,白',obs:[[2,'紫:9,白:7']],tryInter:true,nGen:1,pure:true}"));
-T('反推 15:1（重叠）-> 有解',...RV("{genes:['A','B'],phenList:'紫,白',obs:[[2,'紫:15,白:1']],tryInter:true,nGen:1}"));
+T('反推 9:3:4（隐性上位 + 未写出的互补基因）-> 有解',...RV("{genes:['A','B'],phenList:'紫,红,白',obs:[[2,'紫:9,红:3,白:4']],tryInter:true,nGen:0,pure:true}"));
+T('反推 12:3:1（显性上位）-> 有解',...RV("{genes:['A','B'],phenList:'紫,红,白',obs:[[2,'紫:12,红:3,白:1']],tryInter:true,nGen:0}"));
+T('反推 9:7（互补）-> 有解',...RV("{genes:['A','B'],phenList:'紫,白',obs:[[2,'紫:9,白:7']],tryInter:true,nGen:0,pure:true}"));
+T('反推 15:1（重叠）-> 有解',...RV("{genes:['A','B'],phenList:'紫,白',obs:[[2,'紫:15,白:1']],tryInter:true,nGen:0}"));
 T('反推 2:1（显性纯合致死）-> 有解',...RV("{genes:['A'],obs:[[2,'2:1']],tryLethal:true}"));
 T('反推 1:1（测交）-> 有解',...RV("{genes:['A'],obs:[[1,'1:1']]}"));
 T('反推 3:1（单基因、F2 观测）-> 有解',...RV("{genes:['A'],obs:[[2,'3:1']]}"));
@@ -172,7 +178,7 @@ T('性状候选：有表型清单时优先用清单',
  `__reset();S.rev.phenList='紫,绿,白';S.rev.genes=[{letter:'A',dom:'甲',rec:'乙'}];JSON.stringify(traitOptions())`, eq('["紫","绿","白"]'));
 T('性状候选：支持全角逗号 / 顿号分隔',
  `__reset();S.rev.phenList='紫，绿、白';S.rev.genes=[];JSON.stringify(traitOptions())`, eq('["紫","绿","白"]'));
-T('额外基因：nGen=1 时参与计算的基因数 +1、字母自动顺延',
+T('（内部）额外基因机制：nGen=1 时基因数 +1、字母自动顺延（界面已不再暴露）',
  `__reset();__setSimple(2);S.rev.genes=[{letter:'A'},{letter:'B'}];S.rev.nGen=1;JSON.stringify([revGeneCount(),revGeneLetter(2)])`, eq('[3,"C"]'));
 T('反推结果可渲染图解（不抛异常）',
  `__reset();__setSimple(2);__rev({genes:['A','B'],obs:[[2,'3:1']],pure:true});renderDiagram();'ok'`, eq('ok'));
@@ -244,6 +250,15 @@ T('预设 连锁 F1 可算且不为空',
 T('预设 细胞质：子代随母本（单一表型）',
  `window.applyPreset('cyto');renderRun();runCalculation();__ratio(lastResult.gens[0].pop)`, v=>v==='1'?true:'实际 '+v);
 
+TH('CSS 已移除 summary::before 的 ▸ 折叠箭头（页面左上角的 >）',function(){
+  return /summary::before\s*\{\s*content\s*:\s*["']▸/.test(html) ? '仍存在 summary::before ▸ 规则' : true;
+});
+TH('页面控件里已不含「可选基因对数（额外基因）」输入与「额外基因（默认纯合隐性）」标签',function(){
+  if(html.indexOf("flRow('可选基因对数")>=0)return '仍有 fRow 输入';
+  if(html.indexOf('（默认纯合隐性）')>=0)return '仍有额外基因标签';
+  if(html.indexOf("rv.nGen=v;")>=0)return '仍有修改 nGen 的控件';
+  return true;
+});
 console.log('\n========================================');
 console.log('通过 '+pass+' 项，失败 '+fail+' 项');
 if(failures.length){console.log('失败清单：');failures.forEach(f=>console.log('  - '+f))}

@@ -38,8 +38,8 @@ header .tools{display:flex;gap:8px}
 details.panel{padding:0 14px}
 details.panel summary{cursor:pointer;font-weight:650;padding:12px 0;list-style:none;display:flex;align-items:center;gap:8px;user-select:none}
 details.panel summary::-webkit-details-marker{display:none}
-details.panel summary::before{content:"▸";transition:.15s;color:var(--muted)}
-details.panel[open] summary::before{transform:rotate(90deg)}
+details.panel summary::marker{content:""}
+details.panel summary:hover{color:var(--accent)}
 details.panel .body{padding:2px 0 14px}
 .pad{padding:14px}
 h4.sec{margin:14px 0 6px;font-size:13.5px;color:var(--accent)}
@@ -154,7 +154,7 @@ footer{text-align:center;color:var(--muted);font-size:12px;padding:18px 0 30px}
     <div class="mbody" id="mBody"></div>
   </div>
 </div>
-<footer>遗传学多功能计算器 · 单文件离线运行 · 供学习演算使用 · 版本 <b id="ver">v2.8</b>（染色体视图 · 反推修复 · 多代性能 · 详细计算过程 · 图解抑制可选版）</footer>
+<footer>遗传学多功能计算器 · 单文件离线运行 · 供学习演算使用 · 版本 <b id="ver">v2.9</b>（染色体视图 · 反推修复 · 多代性能 · 详细计算过程 · 图解抑制可选版）</footer>
 <script>
 
 
@@ -280,7 +280,7 @@ function freshState(){return{
     trySexInf:false,   /* 尝试从性遗传(杂合雌雄不同) */
     pw:{enabled:false,nodes:[{id:1,name:'前体物质',x:80,y:120},{id:2,name:'产物1',x:240,y:120},{id:3,name:'产物2',x:400,y:120}],nextId:4,reactions:[],inhibitions:[]},
     p1Phen:{},p2Phen:{},obs:[{gen:2,ratio:''}],domUnknown:false,result:null,
-    nGen:1,                    /* 反推：尝试额外基因对数（额外基因 = 未观测到的互补基因，如 cc 上位时未写出的 C/c） */
+    nGen:0,                    /* 内部保留：可选的"未写出基因"数量，界面不再暴露（互作反推无需手动设置） */
     chrom:[{pair:0,col:0},{pair:0,col:1}]},  /* 反推各基因在染色体图上的位置（决定是否连锁/自由组合，默认各占一对） */
   mating:{mode:'cross',p1:null,p2:null,ratio:[1,1]}
 }}
@@ -2174,14 +2174,11 @@ function buildPwEditor(){
     del.addEventListener('click',()=>{pw.inhibitions.splice(k,1);renderRun()});
     svg.append(del);
   });
-  if(pw.inhibitions.length<3&&rv.genes.length>=2){
+  if(pw.inhibitions.length<3){
+    /* 画布内的快捷入口：基因不足 2 个时会自动补一个基因再建抑制线 */
     const y=H-24-(pw.inhibitions.length*18);
-    const addInh=mk('text',{x:16,y:y+4,'font-size':10.5,fill:'currentColor',opacity:.6,cursor:'pointer'},'+ 抑制线');
-    addInh.addEventListener('click',()=>{
-      const gs=rv.genes.map(g=>g.letter);
-      pw.inhibitions.push({gene:gs[0],targetGene:gs[1]||gs[0],mode:'present'});
-      renderRun();
-    });
+    const addInh=mk('text',{x:16,y:y+4,'font-size':11.5,fill:'#d97706',cursor:'pointer','font-weight':600},'+ 抑制线');
+    addInh.addEventListener('click',()=>pwAddInhibition());
     svg.append(addInh);
   }
   /* 物质框（可拖动） */
@@ -2246,9 +2243,9 @@ function buildPwEditor(){
   defs.append(marker);svg.prepend(defs);
   const wrap2=el('div',{class:'chromwrap'},svg);
   wrap.append(wrap2);
-  /* 抑制线编辑（表单方式补充） */
+  /* 抑制线编辑（表单方式；基因不足 2 个也能点——会自动补一个基因） */
   const inb=el('div');
-  inb.append(el('div',{class:'hint',html:'<b>抑制线</b>可选两种语义：<b>有 A 则抑制 B</b>（A 的产物存在时 B 催化的反应不能进行）／<b>无 A 则抑制 B</b>（A 的产物缺失时 B 失效）。'}));
+  inb.append(el('div',{class:'hint',html:'<b>抑制线</b>可选两种语义：<b>有 A 则抑制 B</b>（默认；A 的产物存在时，B 催化的那一步反应不能进行）／<b>无 A 则抑制 B</b>（A 的产物缺失时 B 失效）。'}));
   pw.inhibitions.forEach((ib,k)=>{
     const row=el('div',{class:'row'});
     row.append(el('span',{class:'badge'},'抑制'+(k+1)));
@@ -2258,10 +2255,31 @@ function buildPwEditor(){
     row.append(el('button',{class:'btn mini danger',onclick:()=>{pw.inhibitions.splice(k,1);renderRun()}},'删'));
     inb.append(row);
   });
-  if(rv.genes.length>=2)
-    inb.append(el('button',{class:'addbtn',onclick:()=>{if(pw.inhibitions.length<3){pw.inhibitions.push({gene:rv.genes[0].letter,targetGene:rv.genes[1].letter,mode:'present'});renderRun()}}},'+ 添加抑制线'));
+  const addInhBtn=el('button',{class:'addbtn',onclick:()=>pwAddInhibition()},'+ 添加抑制线（有A则抑制B）');
+  if(pw.inhibitions.length>=3)addInhBtn.disabled=true;
+  inb.append(addInhBtn);
+  if(rv.genes.length<2)inb.append(el('div',{class:'hint'},'当前只有 1 个基因：点上面的按钮会**自动补一个基因**再建立抑制线（抑制关系需要「甲基因抑制乙基因」两个基因）。'));
   wrap.append(inb);
   return wrap;
+}
+/* 新增一条抑制线；基因不足 2 个时自动补一个基因（避免"抑制线加不了"） */
+function pwAddInhibition(){
+  const rv=S.rev,pw=rv.pw;
+  if(pw.inhibitions.length>=3){toast('最多 3 条抑制线');return}
+  let gs=(rv.genes||[]).map(g=>g.letter).filter(Boolean);
+  let added=null;
+  if(gs.length<2){
+    const used=new Set(gs);
+    let letter='B';
+    for(const c of LETTERS){if(!used.has(c)){letter=c;break}}
+    rv.genes.push({letter:letter,dom:'',rec:''});
+    rebuildLoci();
+    added=letter;
+    gs=(rv.genes||[]).map(g=>g.letter).filter(Boolean);
+  }
+  pw.inhibitions.push({gene:gs[0],targetGene:gs[1],mode:'present'});
+  renderRun();
+  if(added)toast('已自动添加基因 '+added+'，并建立抑制线「有 '+gs[0]+' 则抑制 '+gs[1]+'」——可在下方修改基因与语义。');
 }
 function renderRevPanel(rp){
   const rv=S.rev;
@@ -2289,11 +2307,9 @@ function renderRevPanel(rp){
     row.append(el('button',{class:'btn mini danger',onclick:()=>{if(rv.genes.length>1){rv.genes.splice(k,1);rv.p1Phen={};rv.p2Phen={};refreshPanel('反推')}}},'删'));
     b.append(row);
   });
-  b.append(el('button',{class:'addbtn',onclick:()=>{const n=(rv.genes||[]).length+(rv.nGen||0);if(n<6){rv.genes.push({letter:LETTERS[rv.genes.length]||'C',dom:'',rec:''});rebuildLoci();refreshPanel('反推')}else toast('反推最多支持 6 个基因（含额外基因）')}},'+ 添加基因（最多 6 个）'));
-  b.append(el('div',{class:'hint',html:'<b>可选基因对数</b>：只用于<b>反推</b>的隐性上位类题型。若题目只写了 2 个基因但给出 <b>9:3:4</b>（隐性上位），说明还有一个<b>未被写出的互补基因</b>——把这里设为 1，计算器会自动附加一个纯合隐性基因 cc 参与计算。'}));
-  b.append(flRow('可选基因对数（额外基因）',numIn(rv.nGen==null?1:rv.nGen,0,2,v=>{rv.nGen=v;rebuildLoci();refreshPanel('反推')})));
+  b.append(el('button',{class:'addbtn',onclick:()=>{const n=(rv.genes||[]).length;if(n<6){rv.genes.push({letter:LETTERS[rv.genes.length]||'C',dom:'',rec:''});rebuildLoci();refreshPanel('反推')}else toast('反推最多支持 6 个基因')}},'+ 添加基因（最多 6 个）'));
   /* 基因在染色体上的位置：决定"连锁"还是"自由组合" */
-  const ng=(rv.genes||[]).length+(rv.nGen||0);
+  const ng=(rv.genes||[]).length;
   const chrom=rv.chrom||(rv.chrom=[]);
   for(let i=0;i<ng;i++)if(!chrom[i])chrom[i]={pair:i,col:0};
   chrom.length=ng;
@@ -2304,7 +2320,6 @@ function renderRevPanel(rp){
     cg.append(selIn(String((chrom[i]||{pair:i}).pair),Array.from({length:Math.max(1,ng)},(_,p)=>[String(p),'第'+(p+1)+'对染色体']),v=>{chrom[i].pair=+v;refreshPanel('反推')}));
     cg.append(el('span',{class:'hint'},'　'));
   });
-  for(let i=(rv.genes||[]).length;i<ng;i++)cg.append(el('span',{class:'badge'},'额外基因'+(i-(rv.genes||[]).length+1)+'（默认纯合隐性）'));
   b.append(cg);
   b.append(el('div',{class:'hint',html:'<b>同一对</b>染色体上的基因＝<b>连锁</b>，可填交换值；放在<b>不同对</b>上＝自由组合（独立分配）。默认每个基因各占一对染色体（即默认自由组合）。'}));
   const pairsUsed=[...new Set(chrom.filter(Boolean).map(c=>c.pair))].sort((a,b)=>a-b);
@@ -2325,7 +2340,7 @@ function renderRevPanel(rp){
   /* 图解模式（通路图编辑器） */
   b.append(el('div',{class:'mt'},chkIn(rv.pw.enabled,v=>{rv.pw.enabled=v;renderRun()},'图解模式：直接按题目中的<b>代谢/通路图</b>搭建（不需填基因显隐性名称）')));
   if(rv.pw.enabled){
-    b.append(el('div',{class:'hint',html:'按题目图搭建：<b>方框=物质</b>（框名即表型名，如"白""绿色物质"），<b>箭头=物质转化</b>（箭头上选催化基因——该基因<b>显性</b>时转化才能进行，无该显性基因则停留在上一物质；旁边的"优1/优2"是<b>分支优先级</b>，同一起点分出多支时数字大的产物优先表现，如模式二"前体→绿(优1)/前体→紫(优2)"），<b>抑制线=基因抑制</b>（虚线，如"B抑制A"：B 基因产物缺失时 A 催化的反应失效）。<br>个体表型 = 从前体出发按优先级推进到的最终物质。<br><b>图结构决定比例类型</b>：串联通路（白→绿→紫）只能产生 9:3:4 型比例；并行分支+优先级（白→绿(优1)、白→紫(优2)）产生 12:3:1 / 13:3 型比例。若反推无解，先核对图结构与题目比例是否匹配；不要的抑制线记得删除。'}));
+    b.append(el('div',{class:'hint',html:'按题目图搭建：<b>方框=物质</b>（框名即表型名，如"白""绿色物质"），<b>箭头=物质转化</b>（箭头上选催化基因——该基因<b>显性</b>时转化才能进行，无该显性基因则停留在上一物质；旁边的"优1/优2"是<b>分支优先级</b>，同一起点分出多支时数字大的产物优先表现，如模式二"前体→绿(优1)/前体→紫(优2)"），<b>抑制线=基因抑制</b>（虚线，语义可选：默认「<b>有 A 则抑制 B</b>」——A 存在时 B 催化的那步不能进行；也可切到「无 A 则抑制 B」）。<br>个体表型 = 从前体出发按优先级推进到的最终物质。<br><b>图结构决定比例类型</b>：串联通路（白→绿→紫）只能产生 9:3:4 型比例；并行分支+优先级（白→绿(优1)、白→紫(优2)）产生 12:3:1 / 13:3 型比例。若反推无解，先核对图结构与题目比例是否匹配；不要的抑制线记得删除。'}));
     b.append(buildPwEditor());
   }
   /* 推断范围 */
