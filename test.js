@@ -178,6 +178,16 @@ T('性状候选：有表型清单时优先用清单',
  `__reset();S.rev.phenList='紫,绿,白';S.rev.genes=[{letter:'A',dom:'甲',rec:'乙'}];JSON.stringify(traitOptions())`, eq('["紫","绿","白"]'));
 T('性状候选：支持全角逗号 / 顿号分隔',
  `__reset();S.rev.phenList='紫，绿、白';S.rev.genes=[];JSON.stringify(traitOptions())`, eq('["紫","绿","白"]'));
+T('反推输入简化：一键示例 9:3:4 填入后可直接反推出解',
+ `__reset();revPreset('epi');runReverse(true);JSON.stringify({g:S.rev.genes.map(function(x){return x.letter}),pl:S.rev.phenList,ok:S.rev.result.matches.length>0})`, eq('{"g":["A","B"],"pl":"紫,红,白","ok":true}'));
+T('反推输入简化：一键示例 单基因 3:1 可直接反推出解',
+ `__reset();revPreset('one');runReverse(true);S.rev.result.matches.length>0?'ok':'无解'`, eq('ok'));
+T('反推输入简化：写带名比例会自动补「表型清单」',
+ `__reset();(function(){var box=el('div');renderRevPanel(box);var tg=null;(function w(e){if(!tg&&e.tag==='input'&&e.placeholder&&String(e.placeholder).indexOf('3:1、紫')>=0)tg=e;(e.children||[]).forEach(w)})(box);if(!tg)return 'noInput';tg.value='紫:9,红:3,白:4';tg.oninput();return S.rev.phenList})()`, eq('紫,红,白'));
+T('反推输入简化：已填的表型清单不会被自动补覆盖',
+ `__reset();S.rev.phenList='甲,乙';(function(){var box=el('div');renderRevPanel(box);var tg=null;(function w(e){if(!tg&&e.tag==='input'&&e.placeholder&&String(e.placeholder).indexOf('3:1、紫')>=0)tg=e;(e.children||[]).forEach(w)})(box);tg.value='紫:9,红:7';tg.oninput();return S.rev.phenList})()`, eq('甲,乙'));
+T('亲本表型下拉可原位刷新（输入性状后出现新选项）',
+ `__reset();(function(){var box=el('div');renderRevPanel(box);document.body.append(box);S.rev.genes[0].dom='紫花';refreshRevPhenSelects();var sel=document.querySelectorAll('.revPhenSel')[0];if(!sel)return 'noSel';return sel.options.map(function(o){return o.value}).join('|')})()`, eq('|紫花'));
 T('（内部）额外基因机制：nGen=1 时基因数 +1、字母自动顺延（界面已不再暴露）',
  `__reset();__setSimple(2);S.rev.genes=[{letter:'A'},{letter:'B'}];S.rev.nGen=1;JSON.stringify([revGeneCount(),revGeneLetter(2)])`, eq('[3,"C"]'));
 T('反推结果可渲染图解（不抛异常）',
