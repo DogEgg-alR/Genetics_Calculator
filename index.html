@@ -3388,9 +3388,18 @@ function genData(g){
 }
 function clearGenCache(){GEN_CACHE=new Map()}
 function pctOf(x){
-  const v=(typeof x==='object'&&x!==null)?(x.pn!=null?x.pn:x.p):x;
-  if(v===undefined||v===null)return'—';
-  return rPct(v);
+  /* 兼容三种入参：① 有理数 {n,d} ② {p} / {pn} 包装对象 ③ 普通数值
+     注意：有理数本身也是 object，必须先判 n/d，否则会被当成 {p}/{pn} 而返回占位符 "—"，
+     导致界面上所有百分数列都显示成横线。 */
+  if(x==null)return '—';
+  if(typeof x==='object'){
+    if(x.n!=null&&x.d!=null)return rPct(x);
+    const v=(x.pn!=null?x.pn:x.p);
+    return v==null?'—':pctOf(v);
+  }
+  const num=Number(x);
+  if(!isFinite(num))return '—';
+  return (Math.round(num*100000)/1000)+'%';
 }
 /* 配子形成过程分析（连锁/自由组合/多拷贝），仿试题标准答案的分步写法 */
 function gameteAnalysis(g,who,parent){

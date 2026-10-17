@@ -192,6 +192,10 @@ T('反推勾选不会被清空：点「尝试从性遗传」后右列三个√�
  `__reset();S.calcMode='rev';(function(){var rp=document.getElementById('runPanel');renderRun();function bx(){var a=[];(function w(e){if(e.tag==='input'&&e.attrs&&e.attrs.type==='checkbox')a.push(e);(e.children||[]).forEach(w)})(rp);return a}var b=bx();[2,4,6].forEach(function(i){b[i].checked=true;b[i].onchange()});S=cloneState();var b2=bx();b2[5].checked=true;b2[5].onchange();var a3=bx();return JSON.stringify([a3[2].checked,a3[4].checked,a3[6].checked,a3[5].checked])})()`, eq('[true,true,true,true]'));
 T('连锁说明用 HTML 渲染，不再出现裸露的 <b> 标签',
  `__reset();S.calcMode='rev';(function(){var rp=document.getElementById('runPanel');renderRun();var txt=[];(function w(e){if(e._text)txt.push(e._text);(e.children||[]).forEach(w)})(rp);return txt.join('').indexOf('<b>')<0?'ok':'仍有裸标签'})()`, eq('ok'));
+T('百分数显示正常：有理数 / 包装对象 / 数值 都能转成百分数（不再全是「—」）',
+ `__reset();JSON.stringify([pctOf(R(1,4)),pctOf(R(3,8)),pctOf(R(1,1)),pctOf({p:R(1,2)}),pctOf({pn:R(1,3)}),pctOf(0.125)])`, eq('["25%","37.5%","100%","50%","33.333%","12.5%"]'));
+T('计算过程表格里出现真实百分数（25% / 100%），不是占位横线',
+ `__reset();__setSimple(2);(function(){var P=__p({n0:['A','a'],n1:['B','b']});var g=__self(P,1);lastResult={gens:g,p1:P,p2:null,mode:'self'};var t=__stepsText(g[0]);return (t.indexOf('25%')>=0&&t.indexOf('100%')>=0)?'ok':'缺百分数'})()`, eq('ok'));
 T('（内部）额外基因机制：nGen=1 时基因数 +1、字母自动顺延（界面已不再暴露）',
  `__reset();__setSimple(2);S.rev.genes=[{letter:'A'},{letter:'B'}];S.rev.nGen=1;JSON.stringify([revGeneCount(),revGeneLetter(2)])`, eq('[3,"C"]'));
 T('反推结果可渲染图解（不抛异常）',
