@@ -427,7 +427,7 @@ function helpPanel(){
    '• <b>相引/相斥</b>：由亲本在染色体上放置显性或隐性基因的位置自动决定（如 AB/ab 为相引，Ab/aB 为相斥）。<br>'+
    '• <b>配子致死</b>：某类配子按死亡率失活，剩余配子概率重新归一化。<br>'+
    '• <b>合子致死</b>：某类合子按死亡率死亡，后代比例按存活个体重新归一化（如 Aa 自交 → 2:1）。<br>'+
-   '• 多代计算(自交/自由交配)采用逐代迭代法（等价于马尔可夫链转移矩阵的连乘）。'}));
+   '• 多代计算(自交/自由交配)采用逐代迭代法。'}));
   return panel('📖 使用说明与定义',b);
 }
 function basicPanelBody(){
@@ -1349,7 +1349,7 @@ function forwardChain(p1,p2,mode,N,nextMode,ratio){
     if(mode==='free'||nextMode==='free')
       gens.push({name:'F'+g,pop:freePop(prev.pop),notes:['F'+(g-1)+' 群体内随机交配（配子随机结合）→ F'+g+'（自由交配时基因型频率趋于哈代-温伯格平衡）']});
     else
-      gens.push({name:'F'+g,pop:selfPop(prev.pop),notes:['F'+(g-1)+' 各基因型分别自交（逐代迭代，等价于马尔可夫链转移矩阵连乘）→ F'+g+'（杂合子逐代减少，纯合子逐代增加）']});
+      gens.push({name:'F'+g,pop:selfPop(prev.pop),notes:['F'+(g-1)+' 各基因型分别自交 → F'+g+'（杂合子逐代减少，纯合子逐代增加）']});
   }
   step(); /* 末代展示同样应用剔除 */
   gens.forEach(g=>{if(!g.pop.length&&!g.notes.some(n=>n.indexOf('无存活')>=0))g.notes.push('⚠ 该世代无存活个体（可能全部致死）')});
