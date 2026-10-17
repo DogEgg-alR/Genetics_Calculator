@@ -198,6 +198,14 @@ T('计算过程表格里出现真实百分数（25% / 100%），不是占位横�
  `__reset();__setSimple(2);(function(){var P=__p({n0:['A','a'],n1:['B','b']});var g=__self(P,1);lastResult={gens:g,p1:P,p2:null,mode:'self'};var t=__stepsText(g[0]);return (t.indexOf('25%')>=0&&t.indexOf('100%')>=0)?'ok':'缺百分数'})()`, eq('ok'));
 T('计算过程小节标题不含【一】等序号，直接用内容作标题',
  `__reset();__setSimple(2);(function(){var P=__p({n0:['A','a'],n1:['B','b']});var g=__self(P,2);lastResult={gens:g,p1:P,p2:null,mode:'self'};var t=__stepsText(g[1]);if(t.indexOf('【')>=0)return '仍有【】序号';return (t.indexOf('F2 基因型与概率汇总')>=0&&t.indexOf('F2 表型与比例')>=0)?'ok':'标题缺内容'})()`, eq('ok'));
+T('非累加模式也有表型频率分布（4 种表型，最大项 9/16）',
+ `__reset();__setSimple(2);(function(){var g=__self(__p({n0:['A','a'],n1:['B','b']}),1);var d=distItems(g[0].pop);return JSON.stringify([d.poly,d.items.length,rStr(d.items[0].p)])})()`, eq('[false,4,"9/16"]'));
+T('每一代结果栏都显示频率分布（dist 块数量=代数）',
+ `__reset();__setSimple(2);S.calcMode='fwd';S.mating.p1=__p({n0:['A','a'],n1:['B','b']});S.mating.p2=__p({n0:['A','a'],n1:['B','b']});S.mating.mode='cross';S.generations=3;renderRun();runCalculation();renderDiagram();(function(){var n=0;(function w(e){if(e.className==='dist')n++;(e.children||[]).forEach(w)})(document.getElementById('diagramPanel'));return String(n)})()`, eq('3'));
+T('非累加模式最后一代也有「表型频率分布」柱状图',
+ `__reset();__setSimple(2);S.calcMode='fwd';S.mating.p1=__p({n0:['A','a'],n1:['B','b']});S.mating.p2=__p({n0:['A','a'],n1:['B','b']});S.mating.mode='cross';S.generations=2;renderRun();runCalculation();renderDiagram();(function(){var dp=document.getElementById('diagramPanel');var t=[];(function w(e){if(e._text)t.push(e._text);if(e.attrs&&e.attrs.html)t.push(String(e.attrs.html));(e.children||[]).forEach(w)})(dp);return t.join(' ').indexOf('表型频率分布')>=0?'ok':'缺标题'})()`, eq('ok'));
+T('累加模式仍显示「连续表型频率分布」且为 0..2n 级',
+ `__reset();window.applyPreset('polygen3');renderRun();runCalculation();renderDiagram();(function(){var dp=document.getElementById('diagramPanel');var t=[];(function w(e){if(e._text)t.push(e._text);if(e.attrs&&e.attrs.html)t.push(String(e.attrs.html));(e.children||[]).forEach(w)})(dp);var j=t.join(' ');return (j.indexOf('连续表型频率分布')>=0&&j.indexOf('第6级')>=0)?'ok':'缺连续分布'})()`, eq('ok'));
 T('（内部）额外基因机制：nGen=1 时基因数 +1、字母自动顺延（界面已不再暴露）',
  `__reset();__setSimple(2);S.rev.genes=[{letter:'A'},{letter:'B'}];S.rev.nGen=1;JSON.stringify([revGeneCount(),revGeneLetter(2)])`, eq('[3,"C"]'));
 T('反推结果可渲染图解（不抛异常）',
