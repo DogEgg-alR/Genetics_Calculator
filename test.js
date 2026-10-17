@@ -196,6 +196,8 @@ T('百分数显示正常：有理数 / 包装对象 / 数值 都能转成百分�
  `__reset();JSON.stringify([pctOf(R(1,4)),pctOf(R(3,8)),pctOf(R(1,1)),pctOf({p:R(1,2)}),pctOf({pn:R(1,3)}),pctOf(0.125)])`, eq('["25%","37.5%","100%","50%","33.333%","12.5%"]'));
 T('计算过程表格里出现真实百分数（25% / 100%），不是占位横线',
  `__reset();__setSimple(2);(function(){var P=__p({n0:['A','a'],n1:['B','b']});var g=__self(P,1);lastResult={gens:g,p1:P,p2:null,mode:'self'};var t=__stepsText(g[0]);return (t.indexOf('25%')>=0&&t.indexOf('100%')>=0)?'ok':'缺百分数'})()`, eq('ok'));
+T('计算过程小节标题不含【一】等序号，直接用内容作标题',
+ `__reset();__setSimple(2);(function(){var P=__p({n0:['A','a'],n1:['B','b']});var g=__self(P,2);lastResult={gens:g,p1:P,p2:null,mode:'self'};var t=__stepsText(g[1]);if(t.indexOf('【')>=0)return '仍有【】序号';return (t.indexOf('F2 基因型与概率汇总')>=0&&t.indexOf('F2 表型与比例')>=0)?'ok':'标题缺内容'})()`, eq('ok'));
 T('（内部）额外基因机制：nGen=1 时基因数 +1、字母自动顺延（界面已不再暴露）',
  `__reset();__setSimple(2);S.rev.genes=[{letter:'A'},{letter:'B'}];S.rev.nGen=1;JSON.stringify([revGeneCount(),revGeneLetter(2)])`, eq('[3,"C"]'));
 T('反推结果可渲染图解（不抛异常）',

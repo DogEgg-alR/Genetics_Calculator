@@ -3452,12 +3452,12 @@ function buildStepsText(g){
   push('代数关系：'+(g.name==='F1'
     ? 'P → F1（'+(lastResult.mode==='self'?'亲本自交':lastResult.mode==='free'?'两种亲本自由交配':'杂交')+'）'
     : (lastResult.mode==='free'?'上一代群体随机交配 → ':'上一代各基因型自交 → ')+(g.name||'')));
-  if((g.notes||[]).length){push('');push('【前提与提示】');g.notes.forEach(n=>push('　· '+n))}
+  if((g.notes||[]).length){push('');push('前提与提示');g.notes.forEach(n=>push('　· '+n))}
 
   /* ── 配子形成 ── */
   if(g.eggs&&g.sperm){
     push('');
-    push('【一】雌配子（卵细胞）的形成 —— '+eggName);
+    push('雌配子（卵细胞）的形成 —— '+eggName);
     const an=gameteAnalysis(g,'F',lastResult.mode==='self'?lastResult.p1:lastResult.p1);
     an.forEach(x=>push(x.replace(/^\s+/,'　')));
     push('　∵ 减数分裂时同源染色体分离、非同源染色体自由组合（连锁时同源染色体上的非姐妹染色单体可发生交叉互换）');
@@ -3473,7 +3473,7 @@ function buildStepsText(g){
     push(pet);
 
     push('');
-    push('【二】雄配子（精子）的形成 —— '+spermName);
+    push('雄配子（精子）的形成 —— '+spermName);
     push('　∴ 产生下列 '+g.sperm.length+' 种精子：');
     const pst=el('table',{class:'rtab'});
     pst.append(el('tr',null,el('th',null,'♂ 配子'),el('th',null,'概率（分数）'),el('th',null,'概率（百分数）')));
@@ -3484,7 +3484,7 @@ function buildStepsText(g){
 
     /* ── 棋盘格受精 ── */
     push('');
-    push('【三】受精作用：♀配子 × ♂配子（棋盘格法）');
+    push('受精作用：♀配子 × ♂配子（棋盘格法）');
     push('　∵ 雌、雄配子随机结合，每种结合方式的概率 = 该♀配子概率 × 该♂配子概率');
     push('　∴ 棋盘格如下（行＝♀配子，列＝♂配子，格内＝子代基因型）：');
     const totalPairs=g.eggs.length*g.sperm.length;
@@ -3515,7 +3515,7 @@ function buildStepsText(g){
     }));
     const zrows=[...zb.values()].filter(x=>!rIs0(x.p)).sort((a,b)=>rNum(b.p)-rNum(a.p));
     push('');
-    push('【四】合并同类项（相同基因型的格子概率相加）');
+    push('合并同类项（相同基因型的格子概率相加）');
     if(zrows.length){
       const t2=el('table',{class:'rtab'});
       t2.append(el('tr',null,el('th',null,'子代基因型'),el('th',null,'概率（分数）'),el('th',null,'概率（百分数）')));
@@ -3532,7 +3532,7 @@ function buildStepsText(g){
 
   /* ── 基因型汇总 ── */
   push('');
-  push('【五】'+(g.name||'该代')+' 基因型与概率汇总');
+  push((g.name||'该代')+' 基因型与概率汇总');
   if(gs.length){
     const t3=el('table',{class:'rtab'});
     t3.append(el('tr',null,el('th',null,'基因型'),el('th',null,'概率'),el('th',null,'百分数'),el('th',null,'表型')));
@@ -3546,7 +3546,7 @@ function buildStepsText(g){
   /* ── 致死 ── */
   if(g.raw&&D.dead.length){
     push('');
-    push('【六】致死基因型（合子致死）');
+    push('致死基因型（合子致死）');
     push('　∵ 下列基因型按设定死亡率死亡');
     const t4=el('table',{class:'rtab'});
     t4.append(el('tr',null,el('th',null,'致死基因型'),el('th',null,'致死前概率'),el('th',null,'处理后')));
@@ -3562,7 +3562,7 @@ function buildStepsText(g){
 
   /* ── 表型 ── */
   push('');
-  push('【七】'+(g.name||'该代')+' 表型与比例');
+  push((g.name||'该代')+' 表型与比例');
   if(ps.length){
     const t5=el('table',{class:'rtab'});
     t5.append(el('tr',null,el('th',null,'表型'),el('th',null,'概率'),el('th',null,'百分数')));
