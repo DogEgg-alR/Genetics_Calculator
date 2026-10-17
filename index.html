@@ -2351,7 +2351,17 @@ function revPreset(kind){
   toast('已填入示例，可直接点「开始反推」，也可自行修改');
 }
 function renderRevPanel(rp){
-  const rv=S.rev;
+  /* 关键：rv 必须是"活引用"，不能捕获 S.rev。
+     runReverse 结束时用 S=SAVED 整体替换状态对象，若这里捕获了旧 S.rev，
+     之后所有勾选/输入都会写到"死对象"上——界面一刷新（例如点"尝试从性遗传"会重建面板）
+     这些勾选就会被清空。用 Proxy 实时转发到当前的 S.rev 可彻底避免。 */
+  const rv=new Proxy({},{
+    get:(_,k)=>(S.rev||{})[k],
+    set:(_,k,v)=>{if(!S.rev)S.rev={};S.rev[k]=v;return true},
+    has:(_,k)=>!!(S.rev&&k in S.rev),
+    ownKeys:()=>Reflect.ownKeys(S.rev||{}),
+    getOwnPropertyDescriptor:(_,k)=>({configurable:true,enumerable:true,value:(S.rev||{})[k]})
+  });
   const b=el('div');
   /* 性状候选的即时刷新：入口①输入基因的显/隐性性状（250ms 防抖）→ 重建"亲本表型"下拉；
     入口②改基因字母（300ms 防抖）→ 重建本栏目（染色体位置表/连锁表同步更新）。
@@ -2429,7 +2439,7 @@ function renderRevPanel(rp){
       ...(rv.genes||[]).map((g,i)=>el('span',{class:'row',style:'gap:4px'},
         el('span',{class:'badge'},g.letter||('G'+(i+1))),
         selIn(String((chrom[i]||{pair:i}).pair),Array.from({length:Math.max(1,ng)},(_,p)=>[String(p),'第'+(p+1)+'对']),v=>{chrom[i].pair=+v;refreshPanel('反推')})))));
-    box.append(el('div',null,'放在<b>同一对</b>＝连锁；放在<b>不同对</b>＝自由组合。'));
+    box.append(el('div',{html:'放在<b>同一对</b>＝连锁；放在<b>不同对</b>＝自由组合。'}));
     const pairsUsed=[...new Set(chrom.filter(Boolean).map(c=>c.pair))].sort((a,b)=>a-b);
     pairsUsed.forEach(p=>{
       const group=[];chrom.forEach((c,i)=>{if(c&&c.pair===p&&i<ng)group.push(rv.genes[i])});

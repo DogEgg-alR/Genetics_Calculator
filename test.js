@@ -188,6 +188,10 @@ T('反推输入简化：已填的表型清单不会被自动补覆盖',
  `__reset();S.rev.phenList='甲,乙';(function(){var box=el('div');renderRevPanel(box);var tg=null;(function w(e){if(!tg&&e.tag==='input'&&e.placeholder&&String(e.placeholder).indexOf('3:1、紫')>=0)tg=e;(e.children||[]).forEach(w)})(box);tg.value='紫:9,红:7';tg.oninput();return S.rev.phenList})()`, eq('甲,乙'));
 T('亲本表型下拉可原位刷新（输入性状后出现新选项）',
  `__reset();(function(){var box=el('div');renderRevPanel(box);document.body.append(box);S.rev.genes[0].dom='紫花';refreshRevPhenSelects();var sel=document.querySelectorAll('.revPhenSel')[0];if(!sel)return 'noSel';return sel.options.map(function(o){return o.value}).join('|')})()`, eq('|紫花'));
+T('反推勾选不会被清空：点「尝试从性遗传」后右列三个√仍在（runReverse 换状态对象也不再丢）',
+ `__reset();S.calcMode='rev';(function(){var rp=document.getElementById('runPanel');renderRun();function bx(){var a=[];(function w(e){if(e.tag==='input'&&e.attrs&&e.attrs.type==='checkbox')a.push(e);(e.children||[]).forEach(w)})(rp);return a}var b=bx();[2,4,6].forEach(function(i){b[i].checked=true;b[i].onchange()});S=cloneState();var b2=bx();b2[5].checked=true;b2[5].onchange();var a3=bx();return JSON.stringify([a3[2].checked,a3[4].checked,a3[6].checked,a3[5].checked])})()`, eq('[true,true,true,true]'));
+T('连锁说明用 HTML 渲染，不再出现裸露的 <b> 标签',
+ `__reset();S.calcMode='rev';(function(){var rp=document.getElementById('runPanel');renderRun();var txt=[];(function w(e){if(e._text)txt.push(e._text);(e.children||[]).forEach(w)})(rp);return txt.join('').indexOf('<b>')<0?'ok':'仍有裸标签'})()`, eq('ok'));
 T('（内部）额外基因机制：nGen=1 时基因数 +1、字母自动顺延（界面已不再暴露）',
  `__reset();__setSimple(2);S.rev.genes=[{letter:'A'},{letter:'B'}];S.rev.nGen=1;JSON.stringify([revGeneCount(),revGeneLetter(2)])`, eq('[3,"C"]'));
 T('反推结果可渲染图解（不抛异常）',
