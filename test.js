@@ -194,6 +194,24 @@ T('反推 5:1 -> 应用方案后正推重现 5 : 1',
  S=SAVED;REV_MODE=rc;calcCacheReset();return s;})()`, eq('5 : 1'));
 T('反推 6:3:2:1（两对基因、一对显性纯合致死）-> 有解',...RVA("{genes:['A','B'],obs:[[2,'6:3:2:1']],tryLethal:true}",1));
 T('反推 4:2:2:1（两对基因都显性纯合致死）-> 有解',...RVA("{genes:['A','B'],obs:[[2,'4:2:2:1']],tryLethal:true}",1));
+/* ── 表型不止两类的题型：不完全显性 / 两对基因四种表型 / 累加效应 ── */
+const REVOK=(setup,expect)=>[`__reset();__setSimple(2);(function(){
+ var r=__rev(${setup});if(!r.matches.length)return '无解 tried='+r.tried;
+ var m=r.matches[0],SAVED=cloneState(),rc=REV_MODE;REV_MODE=true;
+ applyRevHypothesis(m.hyp);
+ var gens=forwardChain(m.p1,m.p2,'cross',1,'self');
+ var s=ratioStr(phenoSummary(gens[0].pop).map(function(x){return x.pn}));
+ var g=JSON.stringify([m.p1.all,m.p2.all]);
+ S=SAVED;REV_MODE=rc;calcCacheReset();
+ return s+'|'+g;})()`,eq(expect)];
+T('反推 1:2:1（不完全显性）-> 亲本 Aa×Aa 且正推重现 1:2:1',
+ ...REVOK("{genes:['A'],phenList:'黑,灰,白',obs:[[1,'黑:1,灰:2,白:1']]}",'1 : 2 : 1|[{"n0":["A","a"]},{"n0":["A","a"]}]'));
+T('反推 9:3:3:1（两对基因四种表型）-> 亲本 AaBb×AaBb 且重现 9:3:3:1',
+ ...REVOK("{genes:['A','B'],phenList:'甲,乙,丙,丁',obs:[[1,'甲:9,乙:3,丙:3,丁:1']],tryInter:true}",'9 : 3 : 3 : 1|[{"n0":["A","a"],"n1":["B","b"]},{"n0":["A","a"],"n1":["B","b"]}]'));
+T('反推 1:4:6:4:1（累加效应）-> 亲本 AaBb×AaBb 且重现 1:4:6:4:1',
+ ...REVOK("{genes:['A','B'],phenList:'白,浅,中,深,黑',obs:[[1,'白:1,浅:4,中:6,深:4,黑:1']],tryInter:true}",'1 : 4 : 6 : 4 : 1|[{"n0":["A","a"],"n1":["B","b"]},{"n0":["A","a"],"n1":["B","b"]}]'));
+T('反推 1:2:1 只填数字（不填表型清单）也能推',...RVA("{genes:['A'],obs:[[1,'1:2:1']]}",1));
+T('反推 1:4:6:4:1 只填数字（不勾互作）也能推',...RVA("{genes:['A','B'],obs:[[1,'1:4:6:4:1']]}",1));
 T('反推 8:1 点「查看」直接弹出计算过程（含配子致死与存活率）',
  `__reset();S.calcMode='rev';S.rev.genes=[{letter:'A',dom:'灰身',rec:'黑身'}];S.rev.obs=[{gen:1,ratio:'8:1',sep:false}];S.rev.tryLethal=true;S.rev.phenList='';
   runReverse();renderDiagram();(function(){

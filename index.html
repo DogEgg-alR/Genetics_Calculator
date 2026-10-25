@@ -1326,8 +1326,32 @@ function applyRemovals(gi,pop){
   else out=[];
   return{pop:out,notes};
 }
-/* 正推/反推共用的世代链计算（含逐代剔除） */
+/* 正推/反推共用的世代链计算（含逐代剔除）
+   ── 反推性能的关键：世代链里只有"基因型"与概率，不含表型（表型是渲染时按假设现算的），
+      所以凡是"基因型相同 + 致死/连锁设置相同"的假设，世代链完全一样，可以安全缓存复用。
+      双基因题反推原本要跑几千次 forwardChain（每次约 27ms），加缓存后多数直接命中。 */
+const CHAIN_CACHE=new Map();
+function chainSigPart(x){try{return JSON.stringify(x)}catch(e){return String(x)}}
+function chainKey(p1,p2,mode,N,nextMode){
+  return [chainSigPart(p1&&{all:p1.all,cyto:p1.cyto,sex:p1.sex}),
+          chainSigPart(p2&&{all:p2.all,cyto:p2.cyto,sex:p2.sex}),
+          mode,N,nextMode,
+          chainSigPart(S.gLethal),chainSigPart(S.zLethal),
+          chainSigPart(S.removals),chainSigPart(S.chrom)].join('#');
+}
 function forwardChain(p1,p2,mode,N,nextMode,ratio){
+  /* 逐代剔除规则按"表型"筛人，表型又依赖当前假设；图解模式同样挂钩表型函数——
+     这两种情况下缓存不安全，直接算。 */
+  if(ZYG_HOOK||(S.removals&&S.removals.some(r=>r.name)))return forwardChainRaw(p1,p2,mode,N,nextMode,ratio);
+  const key=chainKey(p1,p2,mode,N,nextMode);
+  const hit=CHAIN_CACHE.get(key);
+  if(hit)return hit;
+  const res=forwardChainRaw(p1,p2,mode,N,nextMode,ratio);
+  if(CHAIN_CACHE.size>3000)CHAIN_CACHE.clear();
+  CHAIN_CACHE.set(key,res);
+  return res;
+}
+function forwardChainRaw(p1,p2,mode,N,nextMode,ratio){
   nextMode=nextMode||'self';
   const gens=[];
   const step=()=>{const prev=gens[gens.length-1];const rr=applyRemovals(gens.length,prev.pop);if(rr.notes.length){prev.pop=rr.pop;prev.notes.push(...rr.notes)}};
@@ -1523,7 +1547,7 @@ function applyRevHypothesis(hyp){
       dom:as?as[0]:(gi.dom||''),
       rec:as?as[as.length-1]:(gi.rec||''),
       mid:(as&&as.length===3)?as[1]:'',
-      mode:(dm&&dm.indexOf('sexInf')===0)?'sexInfluenced':'complete',
+      mode:(dm&&dm.indexOf('sexInf')===0)?'sexInfluenced':(dm==='incomplete'?'incomplete':'complete'),
       inherit:hyp.inh[i],maternal:false,
       /* reverseExtra：反推自动追加的"未写出的互补基因"，只在被上位掩盖时参与表型，
          平时不写进表型描述，保证与题面表型名一致（不然 9:3:4 匹配不上） */
@@ -1582,9 +1606,22 @@ function applyRevHypothesis(hyp){
   S.sexEnabled=hasSex;S.sexSystem=hasSex?'XY':'none';S.barr=false;
   const gr=(hyp.gRules||[]).slice(); /* 机制假设：配子致死（可带部分致死率、可只作用于一种性别） */
   S.gLethal={enabled:gr.length>0,rules:gr};
-  const IT_SLOTS={complement:2,recessiveEpi:3,dominantEpi:3,inhibitor:2,duplicate:2,additive:3};
+  const IT_SLOTS={complement:2,recessiveEpi:3,dominantEpi:3,inhibitor:2,duplicate:2,additive:3,fourclass:4,cumulative:5};
   if(hyp.inter==='none'){
     S.inter={enabled:false,type:'complement',locusA:'',locusB:'',traits:['表型一','表型二','表型三','表型四'],addLoci:[],pathway:{steps:[],final:''},custom:{},customLoci:[]};
+  }else if(hyp.inter==='fourclass'||hyp.inter==='cumulative'){
+    /* 不是"上位/互补"那种互作，而是"两对基因共同决定一个性状"：
+       fourclass → A_B_/A_bb/aaB_/aabb 四个名字；cumulative → 按显性等位基因个数分级 */
+    const k=IT_SLOTS[hyp.inter];
+    const as=(hyp.assign&&hyp.assign.length===k)?hyp.assign:null;
+    const T=['','','','',''];
+    if(as)for(let i=0;i<k;i++)T[i]=as[i];
+    else{
+      T[0]=defDom(genes[0]);T[k-1]=defRec(genes[0]);
+      for(let i=1;i<k-1;i++)T[i]='第'+i+'级';
+    }
+    S.inter={enabled:true,type:hyp.inter,locusA:'n0',locusB:'n1',traits:T,
+      addLoci:['n0','n1'],pathway:{steps:[],final:''},custom:{},customLoci:[]};
   }else{
     /* 表型分配：互作的 k 个表型槽位各分配一个用户表型名；未提供则回落基因注释 */
     const k=IT_SLOTS[hyp.inter]||2;
@@ -1607,7 +1644,7 @@ function revParentCandidates(hyp){
      · 非互作题（inter='none'）→ 只用用户填写的基因；
      · 互作题（互补/上位/抑制…）→ 额外基因会把"未写出的互补基因"补上，
        否则 AABB×aabb 这种需要 cc 掩蔽的 9:3:4 / 12:3:1 永远枚举不出来。 */
-  const useExtra=(hyp.inter&&hyp.inter!=='none'&&hyp.inter!=='pw');
+  const useExtra=(hyp.inter&&hyp.inter!=='none'&&hyp.inter!=='pw'&&hyp.inter!=='fourclass'&&hyp.inter!=='cumulative');
   const nAll=useExtra?revGeneCount():genes.length;
   if(hyp.inh){while(hyp.inh.length<nAll)hyp.inh.push('auto');hyp.inh.length=nAll;}
   if(hyp.let){while(hyp.let.length<nAll)hyp.let.push('none');hyp.let.length=nAll;}
@@ -1802,13 +1839,25 @@ function runReverse(silent){
   const namedObs=obs.some(o=>(o.k&&o.k.named)||(o.sep&&((o.kF&&o.kF.named)||(o.kM&&o.kM.named))));
   /* 枚举空间 */
   const inhOpts=rv.trySex?['auto','X','Y','both']:['auto'];
-  const interOpts=(genes.length>=2&&rv.tryInter)?['complement','recessiveEpi','dominantEpi','inhibitor','duplicate','additive']:['none'];
-  if(genes.length>=2&&rv.tryInter)interOpts.unshift('none');
+  const interOpts=['none'];
+  if(genes.length>=2){
+    /* 顺序很重要：先试"没有上位关系"的几种解释（含"累加效应/四表型"），
+       再试六种经典互作。四表型题若先跑完互作枚举，会白跑上万次、界面卡好几秒。
+       "两对基因共同决定一个性状"不是上位/互补，不该被当成互作：
+       · cumulative：累加效应 1:4:6:4:1 → 按显性等位基因个数分 5 级
+       · fourclass：F₂=9:3:3:1 而四个表型各不相同 → 需要 4 个表名
+       cumulative 与表名无关：纯数字比例（1:4:6:4:1）也要能推，默认级别名"第 n 级" */
+    interOpts.push('cumulative');
+    if(phenList.length>=4)interOpts.push('fourclass');
+    if(rv.tryInter)['complement','recessiveEpi','dominantEpi','inhibitor','duplicate','additive'].forEach(x=>interOpts.push(x));
+  }
   const letVals=rv.tryLethal?['none','domHom','recHom']:['none'];
-  /* 显隐模式枚举：完全显性 + 从性遗传(sexInfM雄显 / sexInfF雌显) */
+  /* 显隐模式枚举：完全显性 + 从性遗传(sexInfM雄显 / sexInfF雌显) + 不完全显性（单基因且表型 3 名） */
   const domModeOpts=genes.map(()=>{
     const o=['complete'];
     if(rv.trySexInf){o.push('sexInfM');o.push('sexInfF')}
+    /* 不完全显性：单基因 1:2:1 只能由它解释；纯数字比例（无表名）也要能推 */
+    if(genes.length===1)o.push('incomplete');
     return o;
   });
   const nG=genes.length;
@@ -1819,14 +1868,20 @@ function runReverse(silent){
   }
   /* 表型分配：phenList 提供且互作开启时，枚举互作槽位的表名排列；
      单基因非互作也枚举 A_/aa 两槽。带名观测必须提供 phenList 才有意义。 */
-  const IT_SLOTS={complement:2,recessiveEpi:3,dominantEpi:3,inhibitor:2,duplicate:2,additive:3};
+  const IT_SLOTS={complement:2,recessiveEpi:3,dominantEpi:3,inhibitor:2,duplicate:2,additive:3,fourclass:4,cumulative:5};
   function assignOptsFor(inter){
     if(!phenList.length)return[null];
     if(inter==='none'){
-      return nG===1?permute(phenList,2):[null];
+      if(nG!==1)return[null];
+      return phenList.length>=3?permute(phenList,3):permute(phenList,2);
     }
     const k=IT_SLOTS[inter];
     if(phenList.length<k)return[null];
+    /* 累加效应按级别递增，级别顺序由表型清单的书写顺序决定：只试正序/倒序 */
+    if(inter==='cumulative'){
+      const asc=phenList.slice(0,k);
+      return[asc,asc.slice().reverse()];
+    }
     return permute(phenList,k);
   }
   const swapOpts=(genes.length>=2&&rv.tryInter)?[false,true]:[false];
@@ -1938,6 +1993,8 @@ function runReverse(silent){
     if(domMode.some((x,j)=>x.indexOf('sexInf')===0&&inh[j]!=='auto'))continue;
     const hyp={genes,inh,let:letv,flip,inter,swap,assign,domMode};
     if(tryHyp(hyp)===false)break outer;
+    /* 四表型/累加效应一旦推出解，就不必再跑六种互作枚举（那是万次级别的开销） */
+    if((inter==='fourclass'||inter==='cumulative')&&matches.length)break outer;
   }
   /* ── 机制补搜（常规假设都推不出来时）─────────────────────────────
      很多真题的"怪比例"来自：配子（花粉/精子）部分致死、部分致死（只死一部分个体）、
@@ -2039,6 +2096,7 @@ function hypDesc(m){
     let s=g.letter+'：'+way;
     if(dm==='sexInfM')s+='（从性遗传，杂合♂显性/♀隐性）';
     if(dm==='sexInfF')s+='（从性遗传，杂合♂隐性/♀显性）';
+    if(dm==='incomplete')s+='（不完全显性，杂合子为中间性状）';
     if(m.hyp.flip.includes(i))s+='，'+g.letter.toLowerCase()+' 对 '+g.letter+' 显性';
     const lt=String(m.hyp.let[i]||'none'),lc=lt.indexOf(':')>=0?lt.slice(0,lt.indexOf(':')):lt,lf=lt.indexOf(':')>=0?lt.slice(lt.indexOf(':')+1)+'%':'全部';
     if(lc==='domHom')s+='，'+g.letter+g.letter+' '+lf+' 致死';
@@ -2080,6 +2138,18 @@ function hypDesc(m){
     });
     const ix=(pw.inhibitions||[]).map(ib=>ib.gene+'基因'+((ib.mode==='absent')?'产物缺失时抑制':'存在时抑制')+ib.targetGene+'基因的作用');
     parts.push('通路图：'+rx.join('；')+(ix.length?'；'+ix.join('；'):'')+'；表型=物质转化推进到的最远物质');
+    return parts.join('；');
+  }
+  if(m.hyp.inter==='fourclass'||m.hyp.inter==='cumulative'){
+    const GA=m.hyp.genes[0].letter,GB=m.hyp.genes[1]?m.hyp.genes[1].letter:'';
+    if(m.hyp.inter==='fourclass'){
+      const slot=['A_B_','A_bb','aaB_','aabb'];
+      const t=(m.hyp.assign||[]).map((a,i)=>(slot[i]||'槽'+(i+1))+'='+a).join('，');
+      parts.push(GA+'/'+GB+' 两对基因独立组合、四个表型各不相同（'+t+'）');
+      return parts.join('；');
+    }
+    const t=(m.hyp.assign||[]).map((a,i)=>i+'个显性等位='+a).join('，');
+    parts.push(GA+'/'+GB+' 累加效应（'+(t||'按显性等位基因个数分 5 级，F₂=1:4:6:4:1')+'）');
     return parts.join('；');
   }
   if(m.hyp.inter&&m.hyp.inter!=='none'){
@@ -2542,7 +2612,7 @@ function renderRevPanel(rp){
   pi.placeholder='题目给了表型名就填这里，如：紫, 红, 白（选填；写带名比例时会自动补）';
   phRow.append(pi);
   b.append(phRow);
-  b.append(el('div',{class:'hint'},'填了它，第 5 步就能写「紫:9,红:3,白:4」；不填则只写比例数字（3:1）或只用上面的显/隐性性状。'));
+  b.append(el('div',{class:'hint',html:'填了它，第 5 步就能写「紫:9,红:3,白:4」；不填则只写比例数字（3:1）或只用上面的显/隐性性状。<br><b>表型多于两类时务必按题目顺序填全</b>：不完全显性 <b>1:2:1</b> 填 3 个（如 黑,灰,白）；两对基因四种表型 <b>9:3:3:1</b> 填 4 个（如 甲,乙,丙,丁）；累加效应 <b>1:4:6:4:1</b> 填 5 个、由低到高（如 白,浅,中,深,黑）。'}));
   /* 输入逻辑简化：第5步写带名比例时，自动把表型名补进「表型清单」（用户没填过才补） */
   const autoFillPhen=txt=>{
     if((rv.phenList||'').trim())return;
@@ -3244,6 +3314,27 @@ function zygPhenotype(z){
         interText=it.custom[key]||'（未命名表型）';
         cl.forEach(id=>involved.add(id));
       }
+    }else if(it.type==='fourclass'){
+      /* 两对独立基因、四种不同表型（如 F₂=9:3:3:1 且四个表型各不相同）：
+         表型 = A_B_ / A_bb / aaB_ / aabb 四类各对应一个名字 */
+      const A=locusById(it.locusA),B=locusById(it.locusB);
+      if(A&&B&&(z.all[A.id]||[]).length&&(z.all[B.id]||[]).length){
+        const idx=(hasDom(A)?0:2)+(hasDom(B)?0:1);
+        interText=it.traits[idx]||it.traits[3];
+        involved.add(A.id);involved.add(B.id);
+      }
+    }else if(it.type==='cumulative'){
+      /* 累加效应（多基因数量性状）：表型级别 = 所含"显性等位基因"的个数 0..2n，
+         两对基因 AaBb×AaBb 时即 1:4:6:4:1 */
+      const ids=(it.addLoci||[]).slice();
+      let n=0,ok=true;
+      ids.forEach(id=>{
+        const l=locusById(id);
+        if(!l||!(z.all[id]||[]).length){ok=false;return}
+        (z.all[id]||[]).forEach(x=>{if(x===alleleSyms(l)[0])n++});
+        involved.add(id);
+      });
+      if(ok)interText=(it.traits[n]!=null&&it.traits[n]!=='')?it.traits[n]:('第 '+n+' 级');
     }
   }
   LOC.forEach(l=>{
