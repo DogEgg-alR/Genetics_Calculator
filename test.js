@@ -168,6 +168,43 @@ T('反推 2:1（显性纯合致死）-> 有解',...RV("{genes:['A'],obs:[[2,'2:1
 T('反推 1:1（测交）-> 有解',...RV("{genes:['A'],obs:[[1,'1:1']]}"));
 T('反推 3:1（单基因、F2 观测）-> 有解',...RV("{genes:['A'],obs:[[2,'3:1']]}"));
 T('反推 1:1（含伴性搜索）-> 有解',...RV("{genes:['A'],obs:[[1,'1:1']],trySex:true}"));
+/* ── 机制补搜：配子半致死 / 部分致死 / 三体（真题里的"怪比例"） ── */
+const RVA=(setup,n)=>[`__reset();__setSimple(2);__rev(${setup}).matches.length`,v=>v>=n?true:'只找到 '+v+' 个解'];
+const APPLY=(setup,gen)=>[`__reset();__setSimple(2);(function(){
+ var r=__rev(${setup});if(!r.matches.length)return '无解';
+ var m=r.matches[0],SAVED=cloneState(),rc=REV_MODE;REV_MODE=true;
+ applyRevHypothesis(m.hyp);
+ var gens=forwardChain(m.p1,m.p2,'self',r.N,'self');
+ var last=gens[gens.length-1];
+ var s=ratioStr(phenoSummary(last.pop).map(function(x){return x.pn}));
+ var txt=buildStepsText(last).map(function(x){return typeof x==='string'?x:(x.textContent||'')}).join('');
+ S=SAVED;REV_MODE=rc;calcCacheReset();
+ return s+' / N='+r.N+' / 配子致死说明='+(txt.indexOf('配子致死')>=0);})()`,eq(gen)];
+T('反推 8:1（隐性配子 50% 致死）-> 有解',...RVA("{genes:['A'],obs:[[1,'8:1']]}",1));
+T('反推 8:1 -> 应用方案后正推精确重现 8 : 1，且计算过程含配子致死说明',...APPLY("{genes:['A'],obs:[[1,'8:1']]}",'8 : 1 / N=1 / 配子致死说明=true'));
+T('反推 7:2（隐性配子部分致死）-> 有解并可重现',...APPLY("{genes:['A'],obs:[[1,'7:2']]}",'7 : 2 / N=1 / 配子致死说明=true'));
+T('反推 5:1（纯合隐性部分致死 / 三体）-> 有解',...RVA("{genes:['A'],obs:[[1,'5:1']]}",1));
+T('反推 5:1 -> 应用方案后正推重现 5 : 1',
+ `__reset();__setSimple(1);(function(){
+ var r=__rev({genes:['A'],obs:[[1,'5:1']]});if(!r.matches.length)return '无解';
+ var m=r.matches[0],SAVED=cloneState(),rc=REV_MODE;REV_MODE=true;
+ applyRevHypothesis(m.hyp);
+ var gens=forwardChain(m.p1,m.p2,'self',r.N,'self');
+ var s=ratioStr(phenoSummary(gens[gens.length-1].pop).map(function(x){return x.pn}));
+ S=SAVED;REV_MODE=rc;calcCacheReset();return s;})()`, eq('5 : 1'));
+T('反推 6:3:2:1（两对基因、一对显性纯合致死）-> 有解',...RVA("{genes:['A','B'],obs:[[2,'6:3:2:1']],tryLethal:true}",1));
+T('反推 4:2:2:1（两对基因都显性纯合致死）-> 有解',...RVA("{genes:['A','B'],obs:[[2,'4:2:2:1']],tryLethal:true}",1));
+T('反推 8:1 点「查看」直接弹出计算过程（含配子致死与存活率）',
+ `__reset();S.calcMode='rev';S.rev.genes=[{letter:'A',dom:'灰身',rec:'黑身'}];S.rev.obs=[{gen:1,ratio:'8:1',sep:false}];S.rev.tryLethal=true;S.rev.phenList='';
+  runReverse();renderDiagram();(function(){
+  var d=document.getElementById('diagramPanel');
+  function tOf(e){var t=[];(function w(x){if(x._text)t.push(String(x._text));(x.children||[]).forEach(w)})(e);return t.join(' ')}
+  var b=null;(function w(x){if(!b&&x.tag==='button'&&tOf(x).indexOf('查看')>=0)b=x;(x.children||[]).forEach(w)})(d);
+  if(!b)return '无查看按钮';b.dispatch('click');
+  var m=tOf(document.getElementById('mBody'));
+  return (m.indexOf('8 : 1')>=0?'8:1':'缺8:1')+'/'+(m.indexOf('配子致死')>=0?'配子致死':'缺配子致死')+'/'+(m.indexOf('存活率')>=0?'存活率':'缺存活率');})()`, eq('8:1/配子致死/存活率'));
+T('反推展示代数 = 观测到的最远代（不再被"计算至第几代"拉长）',
+ `__reset();__setSimple(1);(function(){S.generations=5;var r=__rev({genes:['A'],obs:[[1,'8:1']]});return r.N})()`, eq(1));
 T('反推无解时不抛异常、记录 tried',
  `__reset();__setSimple(1);(function(){var r=__rev({genes:['A'],obs:[[2,'7:5:3']]});return typeof r.tried+'/'+r.matches.length})()`, eq('number/0'));
 T('反推后状态完全恢复（不影响正推）',

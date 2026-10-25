@@ -1542,6 +1542,13 @@ function applyRevHypothesis(hyp){
     chS.placed.push({pair:Math.min(p,chS.pairs-1),col:0,slot:i,locus:'n'+i,sym:gi.dletter});
     chS.placed.push({pair:Math.min(p,chS.pairs-1),col:1,slot:i,locus:'n'+i,sym:gi.dletter.toLowerCase()});
   });
+  /* 染色体数目变异（三体/四体）：反推"机制"假设里可指定某基因所在染色体对为 3/4 条 */
+  if(hyp.ploidy){
+    geneInfo.forEach((gi,i)=>{
+      const pl=hyp.ploidy[i]||2;
+      if(pl>2)chS.ploidy[Math.min(genLinkPair(i),chS.pairs-1)]=pl;
+    });
+  }
   const recStr=(S.rev.rec==null||S.rev.rec==='')?null:S.rev.rec;
   if(recStr!=null){
     const byP={};
@@ -1556,15 +1563,25 @@ function applyRevHypothesis(hyp){
   }
   const allLeth={enabled:false,rules:[]};
   const zr=[];
-  geneInfo.forEach((gi,i)=>{
-    const lt=hyp.let[i];
-    if(lt==='domHom')zr.push({rate:100,conds:[{locus:'n'+i,allele:gi.dletter,type:'hom'}]});
-    if(lt==='recHom')zr.push({rate:100,conds:[{locus:'n'+i,allele:gi.dletter.toLowerCase(),type:'hom'}]});
-  });
+  /* 致死写法：domHom / recHom / het，可带 ":50" 表示"只有 50% 死"（部分致死）。 */
+  const letSpec=(lt,i)=>{
+    if(!lt||lt==='none')return null;
+    const sid=String(lt),k=sid.indexOf(':');
+    const kind=k>=0?sid.slice(0,k):sid,rate=k>=0?Number(sid.slice(k+1)):100;
+    const D=geneInfo[i].dletter,d=String(D).toLowerCase();
+    if(!(rate>=0&&rate<=100))return null;
+    if(kind==='domHom')return {rate,conds:[{locus:'n'+i,allele:D,type:'hom'}]};
+    if(kind==='recHom')return {rate,conds:[{locus:'n'+i,allele:d,type:'hom'}]};
+    if(kind==='het')  return {rate,conds:[{locus:'n'+i,allele:D,type:'het'}]};
+    return null;
+  };
+  geneInfo.forEach((gi,i)=>{const r=letSpec(hyp.let[i],i);if(r)zr.push(r)});
+  (hyp.zRules||[]).forEach(r=>zr.push(r)); /* 机制假设：显式给出的合子致死规则 */
   S.zLethal={enabled:zr.length>0,rules:zr};
   const hasSex=hyp.inh.some(x=>x!=='auto')||genes.some((g,i)=>dmOf(i).indexOf('sexInf')===0);
   S.sexEnabled=hasSex;S.sexSystem=hasSex?'XY':'none';S.barr=false;
-  S.gLethal={enabled:false,rules:[]};
+  const gr=(hyp.gRules||[]).slice(); /* 机制假设：配子致死（可带部分致死率、可只作用于一种性别） */
+  S.gLethal={enabled:gr.length>0,rules:gr};
   const IT_SLOTS={complement:2,recessiveEpi:3,dominantEpi:3,inhibitor:2,duplicate:2,additive:3};
   if(hyp.inter==='none'){
     S.inter={enabled:false,type:'complement',locusA:'',locusB:'',traits:['表型一','表型二','表型三','表型四'],addLoci:[],pathway:{steps:[],final:''},custom:{},customLoci:[]};
@@ -1618,8 +1635,12 @@ function revParentCandidates(hyp){
          多个基因座位于同一对染色体时按位相乘，自然覆盖相引 AB/ab 与相斥 Ab/aB 两种相位。 */
       const perLocus=[];
       idxs.forEach((x,k)=>{
-        const o=[[Ds[k],Ds[k]],[Ds[k],ds[k]],[ds[k],ds[k]]];
-        perLocus.push(pure?[o[0],o[2]]:o);
+        const pl=(hyp.ploidy&&hyp.ploidy[x]>2)?hyp.ploidy[x]:2;
+        let o;
+        if(pl===3)o=[[Ds[k],Ds[k],Ds[k]],[Ds[k],Ds[k],ds[k]],[Ds[k],ds[k],ds[k]],[ds[k],ds[k],ds[k]]];
+        else if(pl===4)o=[[Ds[k],Ds[k],Ds[k],Ds[k]],[Ds[k],Ds[k],Ds[k],ds[k]],[Ds[k],Ds[k],ds[k],ds[k]],[Ds[k],ds[k],ds[k],ds[k]],[ds[k],ds[k],ds[k],ds[k]]];
+        else o=[[Ds[k],Ds[k]],[Ds[k],ds[k]],[ds[k],ds[k]]];
+        perLocus.push(pure?[o[0],o[o.length-1]]:o);
       });
       const parOpts=[];
       (function genP(depth,cur){
@@ -1633,8 +1654,8 @@ function revParentCandidates(hyp){
           const p1=Object.assign({},c.p1),p2=Object.assign({},c.p2);
           p1.all=Object.assign({},p1.all);p2.all=Object.assign({},p2.all);
           idxs.forEach((gi,k)=>{
-            p1.all['n'+gi]=[a1[k][0],a1[k][1]];
-            p2.all['n'+gi]=[a2[k][0],a2[k][1]];
+            p1.all['n'+gi]=a1[k].slice();
+            p2.all['n'+gi]=a2[k].slice();
           });
           /* 去重键必须包含"每条同源染色体上的等位"（不能只看合并后的等位集合），
              否则 AB/ab 与 Ab/aB 等不同相位、以及不同基因座组合会互相吞掉 */
@@ -1774,8 +1795,9 @@ function runReverse(silent){
     }
   }
   if(!obs.length){note('请至少填写一代的有效表型比例（如 3:1 或 紫:12,绿:3,白:1）');return}
-  /* 反推结果展示代数 = max(观测最大代数, 正推"计算至第几代")——反推成功后可看更远的 Fₙ */
-  const N=Math.max(...obs.map(o=>o.gen),Math.min(10,S.generations||1));
+  /* 反推结果展示代数 = 观测到的最远代（不再被正推的"计算至第几代"拉长，
+     否则"查看"会多画出几代未观测的 Fₙ，那里的比例已不再是题给比例，容易误导） */
+  const N=Math.max(...obs.map(o=>o.gen));
   const g1obs=obs.filter(o=>o.gen===1);
   const namedObs=obs.some(o=>(o.k&&o.k.named)||(o.sep&&((o.kF&&o.kF.named)||(o.kM&&o.kM.named))));
   /* 枚举空间 */
@@ -1872,19 +1894,11 @@ function runReverse(silent){
     renderDiagram();
     return;
   }
-  outer:
-  for(const inter of interOpts)
-  for(const swap of swapOpts)
-  for(const domMode of cartesian(domModeOpts))
-  for(const assign of assignOptsFor(inter))
-  for(const inh of cartesian(genes.map(()=>inhOpts)))
-  for(const letv of cartesian(genes.map(()=>letVals)))
-  for(const flip of flipSets){
-    /* 从性遗传基因为常染色体：跳过伴性/同源区段组合 */
-    if(domMode.some((x,j)=>x.indexOf('sexInf')===0&&inh[j]!=='auto'))continue;
-    const hyp={genes,inh,let:letv,flip,inter,swap,assign,domMode};
+  /* 单个假设的完整检验：应用假设 → 枚举亲本候选 → 逐代比对观测。
+     返回 false 表示已触及尝试上限（需中断）。 */
+  function tryHyp(hyp){
     const isSex=hyp.inh.some(x=>x!=='auto');
-    if(isSex&&rv.firstMode==='self')continue; /* 伴性不支持单亲自交，跳过该假设 */
+    if(isSex&&rv.firstMode==='self')return true; /* 伴性不支持单亲自交，跳过该假设 */
     const nextMode=isSex&&rv.nextMode==='self'?'free':rv.nextMode; /* 伴性时"自交"按群体内自由交配处理（雌雄异体） */
     if(!REV_MODE)REV_MODE=true;
     applyRevHypothesis(hyp);
@@ -1892,7 +1906,7 @@ function runReverse(silent){
     const combos=revParentCandidates(hyp);
     for(const c of combos){
       tried++;
-      if(tried>TRIED_CAP)break outer;
+      if(tried>TRIED_CAP)return false;
       /* 注意：revParentCandidates 返回的 c.p1 / c.p2 已经是完整亲本对象
          （{all,cyto,sex}），不能再包一层 {all:...}，否则等位会丢，比例全错 */
       const P1=c.p1,P2=c.p2;
@@ -1908,10 +1922,70 @@ function runReverse(silent){
         if(!obsMatch(gens[o.gen-1].pop,o)){ok=false;break}
       }
       if(ok)matches.push({p1:P1,p2:P2,hyp});
-      if(matches.length>=60)break outer;
+      if(matches.length>=60)return true;
+    }
+    return true;
+  }
+  outer:
+  for(const inter of interOpts)
+  for(const swap of swapOpts)
+  for(const domMode of cartesian(domModeOpts))
+  for(const assign of assignOptsFor(inter))
+  for(const inh of cartesian(genes.map(()=>inhOpts)))
+  for(const letv of cartesian(genes.map(()=>letVals)))
+  for(const flip of flipSets){
+    /* 从性遗传基因为常染色体：跳过伴性/同源区段组合 */
+    if(domMode.some((x,j)=>x.indexOf('sexInf')===0&&inh[j]!=='auto'))continue;
+    const hyp={genes,inh,let:letv,flip,inter,swap,assign,domMode};
+    if(tryHyp(hyp)===false)break outer;
+  }
+  /* ── 机制补搜（常规假设都推不出来时）─────────────────────────────
+     很多真题的"怪比例"来自：配子（花粉/精子）部分致死、部分致死（只死一部分个体）、
+     或用三体/四体材料。8:1 = 隐性配子 50% 致死；5:1 = 三体杂合×隐性；
+     这些在模型里都算得出来，只是常规枚举里没有它们。 */
+  if(!matches.length&&genes.length<=2){
+    const mechs=[];
+    /* 单基因题把致死率枚举得细一些；双基因题只试最常见的 50%（否则尝试数爆炸、界面卡顿） */
+    const RATES=genes.length===1?[50,25,75,20,40,60,80,33,67,10,90]:[50];
+    const SEXES=genes.length===1?['both','male','female']:['both'];
+    const MECH_CAP=Math.min(TRIED_CAP,genes.length===1?20000:6000);
+    genes.forEach((g,gi)=>{
+      const D=g.letter,d=String(D).toLowerCase();
+      /* 先放"教科书标准答案"：纯合致死（100%），保证 2:1 / 6:3:2:1 这类题优先给出经典解释 */
+      mechs.push({zRules:[{rate:100,conds:[{locus:'n'+gi,allele:D,type:'hom'}]}],desc:D+D+' 致死'});
+      mechs.push({zRules:[{rate:100,conds:[{locus:'n'+gi,allele:d,type:'hom'}]}],desc:d+d+' 致死'});
+      RATES.forEach(rate=>{
+        SEXES.forEach(sex=>{
+          mechs.push({gRules:[{rate,sex,conds:[{locus:'n'+gi,allele:d,type:'has'}]}],desc:'含 '+d+' 的配子 '+rate+'% 致死'});
+          mechs.push({gRules:[{rate,sex,conds:[{locus:'n'+gi,allele:D,type:'has'}]}],desc:'含 '+D+' 的配子 '+rate+'% 致死'});
+        });
+        mechs.push({zRules:[{rate,conds:[{locus:'n'+gi,allele:d,type:'hom'}]}],desc:d+d+' '+rate+'% 致死'});
+        mechs.push({zRules:[{rate,conds:[{locus:'n'+gi,allele:D,type:'hom'}]}],desc:D+D+' '+rate+'% 致死'});
+        mechs.push({zRules:[{rate,conds:[{locus:'n'+gi,allele:D,type:'het'}]}],desc:D+d+' 杂合 '+rate+'% 致死'});
+      });
+      /* 染色体数目变异：只对单基因题启用（三体/四体时基因型组合很少） */
+      if(genes.length===1){
+        const p3=[];p3[gi]=3;
+        mechs.push({ploidy:p3,desc:'第 '+(gi+1)+' 对染色体三体（2n+1）'});
+      }
+    });
+    outerM:
+    for(const mech of mechs){
+      if(tried>MECH_CAP)break outerM;
+      for(const inhv of inhOpts)
+      for(const flip of flipSets){
+        const inh=genes.map(()=>inhv);
+        if(inhv!=='auto'&&mech.ploidy)continue; /* 伴性 + 三体先不组合 */
+        const hyp={genes,inh,let:genes.map(()=>'none'),flip,inter:'none',swap:false,assign:null,
+          domMode:genes.map(()=>'complete'),
+          gRules:mech.gRules||[],zRules:mech.zRules||[],ploidy:mech.ploidy||null,mechDesc:mech.desc};
+        if(tryHyp(hyp)===false)break outerM;
+        if(matches.length>=60||tried>MECH_CAP)break outerM;
+      }
     }
   }
   /* 恢复原状态（注意：S 已被替换为克隆，须重新取 S.rev） */
+  matches.sort((a,b)=>hypScore(a.hyp)-hypScore(b.hyp)); /* 越"简单/经典"的解释排越前 */
   S=SAVED;
   DOM_FLIP=new Set();
   rebuildLoci();
@@ -1919,7 +1993,7 @@ function runReverse(silent){
   if(!matches.length){
     lastResult=null;
     renderDiagram();
-    note('尝试了 '+tried+' 种组合假设（含传递方式'+(rv.trySex?'、伴性':'')+(rv.tryLethal?'、致死':'')+(rv.tryInter?'、互作':'')+(rv.domUnknown?'、显隐性互换':'')+'），均无法匹配所给比例。');
+    note('尝试了 '+tried+' 种组合假设（含传递方式'+(rv.trySex?'、伴性':'')+(rv.tryLethal?'、致死':'')+(rv.tryInter?'、互作':'')+(rv.domUnknown?'、显隐性互换':'')+'，以及配子致死/部分致死/三体等机制），均无法匹配所给比例。');
     return;
   }
   const m0=matches[0];
@@ -1940,6 +2014,22 @@ function withRevHyp(fn){
   if(lastResult.hyp.inter==='pw')ZYG_HOOK=z=>pwPhenotype(lastResult.hyp,z);
   try{fn()}finally{ZYG_HOOK=null;S=SAVED;DOM_FLIP=new Set();REV_MODE=revWas;rebuildLoci();calcCacheReset();clearGenCache()}
 }
+/* 假设的"复杂度"打分：越简单（致死规则少、不涉及部分致死/性别限制/三体/互作）分越低，
+   反推结果按分数升序排列，让教科书式的经典解释排在前面。 */
+function hypScore(hyp){
+  let s=0;
+  const cnt=r=>{
+    s+=3;
+    if(r.rate!=null&&r.rate!==100)s+=3;
+    if(r.sex&&r.sex!=='both')s+=2;
+  };
+  (hyp.gRules||[]).forEach(cnt);
+  (hyp.zRules||[]).forEach(cnt);
+  if(hyp.ploidy&&hyp.ploidy.some(x=>x>2))s+=5;
+  if(hyp.inter&&hyp.inter!=='none')s+=2;
+  s+=(hyp.flip||[]).length;
+  return s;
+}
 function hypDesc(m){
   const parts=[];
   m.hyp.genes.forEach((g,i)=>{
@@ -1950,10 +2040,36 @@ function hypDesc(m){
     if(dm==='sexInfM')s+='（从性遗传，杂合♂显性/♀隐性）';
     if(dm==='sexInfF')s+='（从性遗传，杂合♂隐性/♀显性）';
     if(m.hyp.flip.includes(i))s+='，'+g.letter.toLowerCase()+' 对 '+g.letter+' 显性';
-    if(m.hyp.let[i]==='domHom')s+='，'+g.letter+g.letter+' 致死';
-    if(m.hyp.let[i]==='recHom')s+='，'+g.letter.toLowerCase()+g.letter.toLowerCase()+' 致死';
+    const lt=String(m.hyp.let[i]||'none'),lc=lt.indexOf(':')>=0?lt.slice(0,lt.indexOf(':')):lt,lf=lt.indexOf(':')>=0?lt.slice(lt.indexOf(':')+1)+'%':'全部';
+    if(lc==='domHom')s+='，'+g.letter+g.letter+' '+lf+' 致死';
+    if(lc==='recHom')s+='，'+g.letter.toLowerCase()+g.letter.toLowerCase()+' '+lf+' 致死';
+    if(lc==='het')s+='，'+g.letter+g.letter.toLowerCase()+' 杂合 '+lf+' 致死';
     parts.push(s);
   });
+  /* 机制假设：配子致死 / 部分致死 / 染色体数目变异 */
+  if(m.hyp.gRules&&m.hyp.gRules.length){
+    m.hyp.gRules.forEach(r=>{
+      const c=(r.conds||[])[0]||{},al=c.allele==null?'':String(c.allele);
+      const which=(al&&al===al.toLowerCase())?'含 '+al+' 的配子':(al?'含 '+al+' 的配子':'部分配子');
+      const sexTxt=r.sex==='male'?'（仅雄配子）':r.sex==='female'?'（仅雌配子）':'';
+      parts.push(which+sexTxt+' '+(r.rate==null?100:r.rate)+'% 致死');
+    });
+  }
+  if(m.hyp.zRules&&m.hyp.zRules.length){
+    m.hyp.zRules.forEach(r=>{
+      const c=(r.conds||[])[0]||{},al=c.allele==null?'':String(c.allele);
+      let who=al;
+      if(al&&c.type==='hom')who=al===al.toLowerCase()?al+al:al+al;
+      else if(al&&c.type==='het')who=al+al.toLowerCase();
+      const sexTxt=r.sex==='male'?'（仅雄性）':r.sex==='female'?'（仅雌性）':'';
+      parts.push(who+' 个体'+sexTxt+' '+(r.rate==null?100:r.rate)+'% 致死');
+    });
+  }
+  if(m.hyp.ploidy){
+    m.hyp.ploidy.forEach((pl,i)=>{
+      if(pl>2)parts.push('第 '+(i+1)+' 对染色体为 '+(pl===3?'三体（2n+1）':pl===4?'四体（2n+2）':pl+' 体'));
+    });
+  }
   if(m.hyp.inter==='pw'){
     /* 图解模式：按用户画的通路图描述 */
     const pw=m.hyp.pw;
@@ -2022,6 +2138,8 @@ function appendRevSummary(dp){
       if(!revClean){REV_MODE=false}
       calcCacheReset();clearGenCache();
       renderDiagram();
+      /* 点「查看」= 想看这套解释怎么算出来的：直接弹出最末一代的分行计算过程 */
+      try{showGenDetail(lastResult.gens[lastResult.gens.length-1].name)}catch(e){}
     }},'查看'));
     tr.append(td);
     t.append(tr);
@@ -2556,7 +2674,7 @@ function renderRevPanel(rp){
     b.append(row);
   });
   b.append(el('button',{class:'addbtn',onclick:()=>{rv.obs.push({gen:2,ratio:'',sep:false});renderRun()}},'+ 添加一代观测'));
-  b.append(el('div',{class:'hint'},'结果图解的代数 = max(观测最大代数, 正推栏的「计算至第几代」)——想看 F₃/F₄ 可在正推栏调高后代数。'));
+  b.append(el('div',{class:'hint'},'结果图解的代数 = 你所填的"最远观测代数"（例如只填了 F₁ 就只画到 F₁，避免多画出几代未观测、比例已经不同的 Fₙ）。'));
   /* 输入变化自动重新反推（防抖 600ms：停止输入后自动重算并刷新结果，无需手动点「开始反推」） */
   let revTimer=null;
   const autoRev=()=>{
@@ -3498,6 +3616,39 @@ function buildStepsText(g){
     const ss=g.sperm.reduce((a,e)=>rAdd(a,e.pn),rZero);
     pst.append(el('tr',null,el('td',null,'合计'),el('td',null,rStr(ss)),el('td',null,pctOf(ss))));
     push(pst);
+
+    /* ── 配子致死 ── */
+    if(S.gLethal.enabled&&S.gLethal.rules.length){
+      push('');
+      push('配子致死：为什么上面的比例不是 1:1');
+      const rl=S.gLethal.rules.map(r=>{
+        const c=(r.conds||[]).map(cc=>{
+          const al=cc.allele==null?'':String(cc.allele);
+          if(cc.type==='has')return '含 '+al+' 的配子';
+          if(cc.type==='nothas')return '不含 '+al+' 的配子';
+          if(cc.type==='hom')return '纯合 '+al+al+' 的个体产生的配子';
+          return '含 '+al+' 的配子';
+        }).join('、')||'全部配子';
+        const sexTxt=r.sex==='male'?'（只对雄配子）':r.sex==='female'?'（只对雌配子）':'';
+        return c+sexTxt+'有 '+(r.rate==null?100:r.rate)+'% 死亡';
+      });
+      push('　∵ '+rl.join('；'));
+      const rows=[].concat(g.eggs.map(e=>({e,who:'♀'})),g.sperm.map(e=>({e,who:'♂'}))).filter(x=>x.e.surv&&!rEq(x.e.surv,rOne));
+      if(rows.length){
+        const t=el('table',{class:'rtab'});
+        t.append(el('tr',null,el('th',null,'配子'),el('th',null,'致死前概率'),el('th',null,'存活率'),el('th',null,'归一化后概率')));
+        rows.forEach(x=>{
+          const pre=x.e.surv?rDiv(x.e.p,x.e.surv):x.e.p;
+          t.append(el('tr',null,
+            el('td',null,x.who+' '+stripHtml(gameteHtml(x.e.g))),
+            el('td',null,rStr(pre)),
+            el('td',null,rPct(x.e.surv)),
+            el('td',null,rStr(x.e.pn))));
+        });
+        push(t);
+      }
+      push('　∴ 致死配子的概率被剔除，存活的配子按存活率重新归一化（合计仍为 1），再参与受精。');
+    }
 
     /* ── 棋盘格受精 ── */
     push('');
