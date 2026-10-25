@@ -1751,12 +1751,15 @@ function revParentCandidates(hyp){
   const c2=Object.keys(rv.p2Phen||{}).filter(k=>rv.p2Phen[k]);
   if(c1.length||c2.length){
     combos=combos.filter(c=>{
+      /* 注意：c.p1 是完整亲本对象 {all,cyto,sex}，表型判定要传 c.p1.all，
+         否则传进去的"等位组"里根本没有 n0/n1，表型恒为空串、所有候选都被过滤掉
+         （表现为"共尝试 0 种组合假设"）。 */
       if(c1.length){
-        const t1=zygPhenotype({all:c.p1,cyto:{},mother:null,sex:'F'})||'';
+        const t1=zygPhenotype({all:c.p1.all,cyto:c.p1.cyto||{},mother:null,sex:'F'})||'';
         if(!c1.every(k=>t1.indexOf(rv.p1Phen[k])>=0))return false;
       }
       if(c2.length){
-        const t2=zygPhenotype({all:c.p2,cyto:{},mother:null,sex:'M'})||'';
+        const t2=zygPhenotype({all:c.p2.all,cyto:c.p2.cyto||{},mother:null,sex:'M'})||'';
         if(!c2.every(k=>t2.indexOf(rv.p2Phen[k])>=0))return false;
       }
       return true;
@@ -2050,7 +2053,8 @@ function runReverse(silent){
   if(!matches.length){
     lastResult=null;
     renderDiagram();
-    note('尝试了 '+tried+' 种组合假设（含传递方式'+(rv.trySex?'、伴性':'')+(rv.tryLethal?'、致死':'')+(rv.tryInter?'、互作':'')+(rv.domUnknown?'、显隐性互换':'')+'，以及配子致死/部分致死/三体等机制），均无法匹配所给比例。');
+    if(tried===0)note('一个候选亲本都没有生成：第 3 步的「亲本表型约束」把可能亲本全排除了。请先清空或放宽 P♀/P♂ 的表型约束再试。');
+    else note('尝试了 '+tried+' 种组合假设（含传递方式'+(rv.trySex?'、伴性':'')+(rv.tryLethal?'、致死':'')+(rv.tryInter?'、互作':'')+(rv.domUnknown?'、显隐性互换':'')+'，以及配子致死/部分致死/三体等机制），均无法匹配所给比例。');
     return;
   }
   const m0=matches[0];
@@ -2173,7 +2177,12 @@ function appendRevSummary(dp){
   const box=el('div',{class:'card'});
   box.append(el('div',{class:'chead'},'反推结论（共尝试 '+res.tried+' 种组合假设）'));
   if(!res.matches.length){
-    box.append(el('div',{class:'warn'},'未找到能匹配所给比例的解释。可尝试：开启"尝试致死/互作"、"显隐性未知"、放宽亲本表型约束，或核对比例数据。'));
+    /* tried=0 说明"一个新本候选都没生成"，最常见的原因是亲本表型约束把候选全筛掉了
+       （老版本这里 z.all 传成了整个亲本对象，只要选了 P♀/P♂ 表型就必然 0 次尝试） */
+    const msg=res.tried===0
+      ? '一个候选亲本都没有生成——通常是 P♀/P♂ 的「亲本表型约束」把可能亲本全排除了（例如两个亲本表型组合在所选遗传模式下不可能）。请先清空或放宽第 3 步的亲本表型约束再试。'
+      : '未找到能匹配所给比例的解释。可尝试：开启"尝试致死/互作"、"显隐性未知"、放宽亲本表型约束，或核对比例数据。';
+    box.append(el('div',{class:'warn'},msg));
     dp.append(box);return;
   }
   box.append(el('div',{class:'hint',html:'找到 <b>'+res.matches.length+'</b> 种可行解释（同一比例可能对应多种不可区分的假设与亲本组合）。伴性与常染色体若比例相同会并列列出。点击「查看」直接展示该方案的完整遗传图解与逐代计算过程。'}));

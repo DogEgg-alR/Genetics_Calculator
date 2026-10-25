@@ -212,6 +212,26 @@ T('反推 1:4:6:4:1（累加效应）-> 亲本 AaBb×AaBb 且重现 1:4:6:4:1',
  ...REVOK("{genes:['A','B'],phenList:'白,浅,中,深,黑',obs:[[1,'白:1,浅:4,中:6,深:4,黑:1']],tryInter:true}",'1 : 4 : 6 : 4 : 1|[{"n0":["A","a"],"n1":["B","b"]},{"n0":["A","a"],"n1":["B","b"]}]'));
 T('反推 1:2:1 只填数字（不填表型清单）也能推',...RVA("{genes:['A'],obs:[[1,'1:2:1']]}",1));
 T('反推 1:4:6:4:1 只填数字（不勾互作）也能推',...RVA("{genes:['A','B'],obs:[[1,'1:4:6:4:1']]}",1));
+/* 亲本表型约束：老版本这里 zygPhenotype 收到的是整个亲本对象（z.all 里没有 n0），
+   表型恒为空串 → 所有候选被筛掉 → "共尝试 0 种组合假设"。 */
+T('反推：设了 P♀/P♂ 表型约束后仍能推出解（不再 0 次尝试）',
+ `__reset();S.calcMode='rev';S.rev.genes=[{letter:'A',dom:'灰色',rec:'黑色'}];S.rev.phenList='灰色,黑色';
+  S.rev.obs=[{gen:2,ratio:'8:1',sep:false}];S.rev.firstMode='cross';S.rev.nextMode='self';
+  S.rev.chrom=[];S.rev.rec=20;S.rev.nGen=0;S.rev.p1Phen={whole:'灰色'};S.rev.p2Phen={whole:'灰色'};
+  (function(){rebuildLoci();runReverse();var r=S.rev.result;
+   return r.tried>0&&r.matches.length>0?'ok':'tried='+r.tried+' matches='+r.matches.length})()`, eq('ok'));
+T('反推：亲本表型约束真的生效（候选亲本表型都必须含该性状）',
+ `__reset();S.calcMode='rev';S.rev.genes=[{letter:'A',dom:'灰色',rec:'黑色'}];S.rev.phenList='灰色,黑色';
+  S.rev.obs=[{gen:2,ratio:'8:1',sep:false}];S.rev.firstMode='cross';S.rev.nextMode='self';
+  S.rev.chrom=[];S.rev.rec=20;S.rev.nGen=0;S.rev.p1Phen={whole:'灰色'};S.rev.p2Phen={whole:'黑色'};
+  (function(){rebuildLoci();runReverse();var r=S.rev.result;
+   if(!r.matches.length)return 'no match';
+   var bad=r.matches.filter(function(m){
+     var a=zygPhenotype({all:m.p1.all,cyto:{},mother:null,sex:'F'})||'';
+     var b=zygPhenotype({all:m.p2.all,cyto:{},mother:null,sex:'M'})||'';
+     return a.indexOf('灰色')<0||b.indexOf('黑色')<0;
+   }).length;
+   return bad===0?'ok':'有 '+bad+' 条方案不满足亲本表型'})()`, eq('ok'));
 T('反推 8:1 点「查看」直接弹出计算过程（含配子致死与存活率）',
  `__reset();S.calcMode='rev';S.rev.genes=[{letter:'A',dom:'灰身',rec:'黑身'}];S.rev.obs=[{gen:1,ratio:'8:1',sep:false}];S.rev.tryLethal=true;S.rev.phenList='';
   runReverse();renderDiagram();(function(){
